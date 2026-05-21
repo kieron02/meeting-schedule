@@ -14,6 +14,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 header{display:flex;align-items:center;gap:10px;margin-bottom:22px;flex-wrap:wrap;}
 .back-btn{display:flex;align-items:center;gap:5px;padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;text-decoration:none;flex-shrink:0;transition:color .15s;}
 .back-btn:hover{color:var(--text);}
+/* editable title */
+#page-title{cursor:pointer;border-bottom:2px dashed transparent;transition:border-color .15s;outline:none;border-radius:4px;padding:2px 4px;}
+#page-title:hover{border-bottom-color:var(--muted);}
+#page-title:focus{border-bottom-color:var(--accent);background:#fff;border-radius:6px;padding:2px 8px;}
+#title-hint{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;opacity:0;transition:opacity .2s;margin-left:2px;}
+#page-title:hover ~ #title-hint, #page-title:focus ~ #title-hint{opacity:1;}
 header h1{font-size:17px;font-weight:600;letter-spacing:-.3px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .hbtn{display:flex;align-items:center;gap:6px;padding:7px 13px;border:none;border-radius:8px;font-size:12px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:opacity .15s;}
 .hbtn:hover{opacity:.85;}
@@ -117,7 +123,7 @@ header h1{font-size:17px;font-weight:600;letter-spacing:-.3px;flex:1;min-width:0
 <body>
 <header>
   <a class="back-btn" href="index.html">← Back</a>
-  <h1 id="page-title">Loading…</h1>
+  <h1 id="page-title" contenteditable="true" spellcheck="false" title="Click to rename">Loading…</h1><span id="title-hint">click to rename</span>
   <div id="sync-status"><span class="sync-dot"></span><span id="sync-text">Connecting…</span></div>
   <button class="hbtn btn-addday" id="addDayBtn">
     <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="1" width="12" height="12" rx="2"/><line x1="7" y1="4" x2="7" y2="10"/><line x1="4" y1="7" x2="10" y2="7"/></svg>
@@ -501,7 +507,35 @@ function cancelPaste() {
 
 document.getElementById('pb-cancel').addEventListener('click', cancelPaste);
 
-// ── SAVE ─────────────────────────────────────────────────────────────
+// ── EDITABLE TITLE ───────────────────────────────────────────────
+var titleEl = document.getElementById('page-title');
+var lastTitle = '';
+
+titleEl.addEventListener('focus', function() {
+  lastTitle = titleEl.textContent.trim();
+  // select all text on focus
+  var range = document.createRange();
+  range.selectNodeContents(titleEl);
+  var sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+});
+
+titleEl.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { e.preventDefault(); titleEl.blur(); }
+  if (e.key === 'Escape') { titleEl.textContent = lastTitle; titleEl.blur(); }
+});
+
+titleEl.addEventListener('blur', function() {
+  var newName = titleEl.textContent.trim();
+  if (!newName) { titleEl.textContent = lastTitle; return; }
+  if (newName === lastTitle) return;
+  // update Firebase immediately (title change is light, save it right away)
+  document.title = newName;
+  schedRef.update({ name: newName });
+});
+
+// ── SAVE ─────────────────────────────────────────────────────────────────
 document.getElementById('saveBtn').addEventListener('click',function(){
   var btn=this; btn.disabled=true;
   setSyncStatus('syncing','↑ Saving…');
