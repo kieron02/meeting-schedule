@@ -509,319 +509,329 @@ titleEl.addEventListener('focus',function(){lastTitle=titleEl.textContent.trim()
 titleEl.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();titleEl.blur();}if(e.key==='Escape'){titleEl.textContent=lastTitle;titleEl.blur();}});
 titleEl.addEventListener('blur',function(){var v=titleEl.textContent.trim();if(!v){titleEl.textContent=lastTitle;return;}if(v===lastTitle)return;document.title=v;sref.update({name:v});});
 
-// EXPORT EXCEL — manual OpenXML/xlsx builder (no library needed for styles)
+// EXPORT EXCEL — each meeting = its own row block with name, time, tentative
 document.getElementById('btnExcel').addEventListener('click', function() {
-  var slots = [];
-  for (var h = 8; h <= 18; h++) {
-    for (var mm = 0; mm < 60; mm += 15) {
-      if (h === 18 && mm > 0) break;
-      slots.push(p2(h) + ':' + p2(mm));
-    }
-  }
 
-  // category -> fill colour (ARGB hex)
-  var CLR = {'c-sasg':'FFFFEDD5','c-trader':'FFDBEAFE','c-formosa':'FFDCFCE7','c-hyundai':'FFDCFCE7','c-chinasteel':'FFDCFCE7','c-hoaphat':'FFDCFCE7'};
-  var HDR_CLR = 'FFE8EDF5';
-  var TIME_CLR = 'FFF8FAFC';
-  var EMPTY_CLR = 'FFFFFFFF';
-
-  // build lookup
-  var lookup = {};
-  for (var di = 0; di < days.length; di++) lookup[days[di].key] = {};
-  for (var mi = 0; mi < meetings.length; mi++) {
-    var m = meetings[mi];
-    var sa = DS * 60 + m.startMin, ea = sa + m.durMin;
-    for (var t = sa; t < ea; t += 15) {
-      var k = p2(Math.floor(t/60)) + ':' + p2(t%60);
-      if (lookup[m.day] && !lookup[m.day][k])
-        lookup[m.day][k] = { name: m.name, cls: m.cls, isStart: t === sa };
-    }
-  }
-
-  // XML escape
+  // ── HELPERS ──────────────────────────────────────────────────
   function xe(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-  // shared strings
-  var ss = [], ssMap = {};
-  function addSS(v) {
-    var s = String(v||'');
-    if (ssMap[s] === undefined) { ssMap[s] = ss.length; ss.push(s); }
-    return ssMap[s];
+  function colName(c) {
+    var s = ''; c++;
+    while (c > 0) { s = String.fromCharCode(64+(c%26||26))+s; c=Math.floor((c-1)/26); }
+    return s;
+  }
+  function cr(r,c){ return colName(c)+(r+1); }
+  function u16(n){ return new Uint8Array([n&255,(n>>8)&255]); }
+  function u32(n){ return new Uint8Array([n&255,(n>>8)&255,(n>>16)&255,(n>>24)&255]); }
+  function cat(){
+    var len=0,i,j,pos=0;
+    for(i=0;i<arguments.length;i++)len+=arguments[i].length;
+    var o=new Uint8Array(len);
+    for(i=0;i<arguments.length;i++)for(j=0;j<arguments[i].length;j++)o[pos++]=arguments[i][j];
+    return o;
+  }
+  function crc32(data){
+    if(!crc32.t){crc32.t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;crc32.t[n]=c;}}
+    var crc=0xFFFFFFFF;
+    for(var i=0;i<data.length;i++)crc=crc32.t[(crc^data[i])&0xFF]^(crc>>>8);
+    return(crc^0xFFFFFFFF)>>>0;
   }
 
-  // pre-populate shared strings
-  addSS('Time');
-  for (var di2 = 0; di2 < days.length; di2++) addSS(days[di2].label + ' ' + days[di2].date);
-  for (var si = 0; si < slots.length; si++) {
-    addSS(slots[si]);
-    for (var di3 = 0; di3 < days.length; di3++) {
-      var cell = lookup[days[di3].key][slots[si]];
-      if (cell) addSS(cell.name);
-    }
+  // ── CATEGORY COLOURS (match webpage CSS) ─────────────────────
+  var CAT_BG  = {'c-sasg':'FFFFF7ED','c-trader':'FFEFF6FF','c-formosa':'FFF0FDF4','c-hyundai':'FFF0FDF4','c-chinasteel':'FFF0FDF4','c-hoaphat':'FFF0FDF4'};
+  var CAT_FG  = {'c-sasg':'FF7C2D12','c-trader':'FF1E3A5F','c-formosa':'FF14532D','c-hyundai':'FF14532D','c-chinasteel':'FF14532D','c-hoaphat':'FF14532D'};
+  var CAT_BRD = {'c-sasg':'FFEA580C','c-trader':'FF1D4ED8','c-formosa':'FF15803D','c-hyundai':'FF15803D','c-chinasteel':'FF15803D','c-hoaphat':'FF15803D'};
+
+  // ── SHARED STRINGS ────────────────────────────────────────────
+  var ss=[], ssIdx={};
+  function S(v){
+    var s=String(v||'');
+    if(ssIdx[s]===undefined){ssIdx[s]=ss.length;ss.push(s);}
+    return ssIdx[s];
   }
 
-  // styles: numFmts, fonts, fills, borders, cellXfs
-  // fill index map: 0=none,1=gray(required by spec),2=header,3=time,4=empty,5+=category
-  var fillColors = [HDR_CLR, TIME_CLR, EMPTY_CLR];
-  var catKeys = Object.keys(CLR);
-  for (var ci = 0; ci < catKeys.length; ci++) {
-    if (fillColors.indexOf(CLR[catKeys[ci]]) === -1) fillColors.push(CLR[catKeys[ci]]);
+  // ── BUILD STYLE SYSTEM ────────────────────────────────────────
+  var fontList=[], fontMap={};
+  function getFontId(color,bold,italic,sz){
+    var k=[color,bold,italic,sz||10].join('|');
+    if(fontMap[k]===undefined){fontMap[k]=fontList.length;fontList.push({color:color,bold:bold,italic:italic,sz:sz||10});}
+    return fontMap[k];
+  }
+  var fillListFinal=[], fillMap={};
+  function getFillId(color){
+    if(fillMap[color]===undefined){fillMap[color]=fillListFinal.length+2;fillListFinal.push(color);}
+    return fillMap[color];
+  }
+  var borderList=[], borderMap={};
+  function getBorderId(leftColor,topStyle){
+    var k=(leftColor||'none')+'|'+(topStyle||'thin');
+    if(borderMap[k]===undefined){borderMap[k]=borderList.length;borderList.push({left:leftColor,top:topStyle||'thin'});}
+    return borderMap[k];
+  }
+  var xfList=[], xfMap={};
+  function getXf(fontId,fillId,borderId,halign){
+    var k=[fontId,fillId,borderId,halign||'left'].join('|');
+    if(xfMap[k]===undefined){xfMap[k]=xfList.length;xfList.push({fontId:fontId,fillId:fillId,borderId:borderId,halign:halign||'left'});}
+    return xfMap[k];
   }
 
-  function fillXml(color) {
-    return '<fill><patternFill patternType="solid"><fgColor rgb="'+color+'"/><bgColor indexed="64"/></patternFill></fill>';
+  // Pre-define base styles
+  var XF_HDR   = getXf(getFontId('FF1A2035',true, false,11), getFillId('FFE8EDF5'), getBorderId(null,'thin'),  'center');
+  var XF_TIME  = getXf(getFontId('FF7A8AAA',false,false,10), getFillId('FFF8FAFC'), getBorderId(null,'thin'),  'center');
+  var XF_EMPTY = getXf(getFontId('FF1A2035',false,false,10), getFillId('FFFFFFFF'), getBorderId(null,'thin'),  'left');
+
+  // Per-category styles: name row (bold), time row (normal), tentative row (italic)
+  var catStyles={};
+  var catClasses=['c-sasg','c-trader','c-formosa','c-hyundai','c-chinasteel','c-hoaphat'];
+  for(var ci=0;ci<catClasses.length;ci++){
+    var ck=catClasses[ci];
+    var bg=CAT_BG[ck], fg=CAT_FG[ck], brd=CAT_BRD[ck];
+    catStyles[ck]={
+      name:    getXf(getFontId(fg,true, false,10), getFillId(bg), getBorderId(brd,'thin'), 'left'),
+      time:    getXf(getFontId(fg,false,false,9),  getFillId(bg), getBorderId(brd,'thin'), 'left'),
+      tent:    getXf(getFontId(fg,false,true, 9),  getFillId(bg), getBorderId(brd,'thin'), 'left'),
+      cont:    getXf(getFontId(fg,false,false,10), getFillId(bg), getBorderId(brd,'thin'), 'left')
+    };
   }
 
-  var fillsXml = '<fills count="'+(fillColors.length+2)+'">'
-    + '<fill><patternFill patternType="none"/></fill>'   // index 0 - required
-    + '<fill><patternFill patternType="gray125"/></fill>' // index 1 - required
-    + fillColors.map(fillXml).join('') // index 2+ = our fills
-    + '</fills>';
+  // ── BUILD WORKSHEET ROWS ──────────────────────────────────────
+  // Strategy: one row per meeting (not per time slot)
+  // Columns: Time | Day1 | Day2 | ...
+  // For each time slot, show the meeting in the correct day column
+  // But show meeting name, time range, and tentative as sub-rows inside each slot block
 
-  // fonts: 0=normal, 1=bold header
-  var fontsXml = '<fonts count="3">'
-    + '<font><sz val="10"/><name val="Calibri"/><color rgb="FF1A2035"/></font>'
-    + '<font><sz val="11"/><b/><name val="Calibri"/><color rgb="FF1A2035"/></font>'
-    + '<font><sz val="10"/><name val="Calibri"/><color rgb="FF7A8AAA"/></font>'
-    + '</fonts>';
+  // Actually: build rows where each meeting occupies exactly 3 sub-rows:
+  //   Row 1: [time] [Meeting Name         ] (bold, coloured bg)
+  //   Row 2: [    ] [08:00 – 09:00        ] (normal, coloured bg)
+  //   Row 3: [    ] [tentative            ] (italic, only if tentative)
+  // Empty slots show nothing. We'll use merged cells for time slots that span rows.
 
-  // borders: 0=none, 1=light grey all round, 2=medium left
-  var bc = 'FF D1D9E6'.replace(/ /g,'');
-  var bordersXml = '<borders count="3">'
-    + '<border><left/><right/><top/><bottom/></border>'
-    + '<border><left style="thin"><color rgb="FFD1D9E6"/></left><right style="thin"><color rgb="FFD1D9E6"/></right><top style="thin"><color rgb="FFD1D9E6"/></top><bottom style="thin"><color rgb="FFD1D9E6"/></bottom></border>'
-    + '<border><left style="medium"><color rgb="FF1D4ED8"/></left><right style="thin"><color rgb="FFD1D9E6"/></right><top style="thin"><color rgb="FFD1D9E6"/></top><bottom style="thin"><color rgb="FFD1D9E6"/></bottom></border>'
-    + '</borders>';
+  // First figure out all unique start times that have at least one meeting
+  // Then for each start time, emit a block of rows
 
-  // build category border map
-  var catBorderClr = {'c-sasg':'FFEA580C','c-trader':'FF1D4ED8','c-formosa':'FF15803D','c-hyundai':'FF15803D','c-chinasteel':'FF15803D','c-hoaphat':'FF15803D'};
-
-  // xf index builder
-  var xfs = [];
-  function addXf(fontId, fillIdx, borderId, bold) {
-    var key = fontId+'|'+fillIdx+'|'+borderId+'|'+bold;
-    for (var i = 0; i < xfs.length; i++) if (xfs[i].key === key) return i;
-    xfs.push({key:key, fontId:fontId, fillIdx:fillIdx, borderId:borderId, bold:bold});
-    return xfs.length - 1;
+  // Collect all meeting start times sorted
+  var startTimes = [];
+  var meetingsByDayTime = {}; // "day|startMin" -> meeting
+  for(var mi=0;mi<meetings.length;mi++){
+    var m=meetings[mi];
+    var k=m.day+'|'+m.startMin;
+    meetingsByDayTime[k]=m;
+    if(startTimes.indexOf(m.startMin)<0) startTimes.push(m.startMin);
   }
+  startTimes.sort(function(a,b){return a-b;});
 
-  // pre-define xfs
-  var xfHeader   = addXf(1, 2, 1, true);   // bold, header fill, light border
-  var xfTime     = addXf(2, 3, 1, false);   // grey font, time fill
-  var xfEmpty    = addXf(0, 4, 1, false);   // normal, white
+  // Build rows array: each entry = {timeLabel, cells: [{dayKey, meeting|null}]}
+  var sheetRows='', rowIdx=1; // rowIdx is 0-based, +1 for header
 
-  // per-category xf (normal + bold for first row)
-  var catXf = {}, catXfBold = {};
-  for (var ci2 = 0; ci2 < catKeys.length; ci2++) {
-    var ck = catKeys[ci2];
-    var fi = fillColors.indexOf(CLR[ck]) + 2; // +2 for the two required fills
-    // custom border with category colour left side
-    catXf[ck]     = addXf(0, fi, 1, false);
-    catXfBold[ck] = addXf(0, fi, 1, true);
-  }
-
-  var xfsXml = '<cellXfs count="'+xfs.length+'">';
-  for (var xi = 0; xi < xfs.length; xi++) {
-    var x = xfs[xi];
-    xfsXml += '<xf numFmtId="0" fontId="'+x.fontId+'" fillId="'+x.fillIdx+'" borderId="'+x.borderId+'" xfId="0"'
-      + (x.bold ? ' applyFont="1"' : '')
-      + ' applyFill="1" applyBorder="1" applyAlignment="1">'
-      + '<alignment horizontal="'+(x.fontId===2?'center':'left')+'" vertical="center"/>'
-      + '</xf>';
-  }
-  xfsXml += '</cellXfs>';
-
-  var stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-    + fontsXml + fillsXml + bordersXml
-    + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    + xfsXml
-    + '</styleSheet>';
-
-  // sheet data
-  function col26(n) { return String.fromCharCode(65 + n); }
-  function cellRef(r, c) { return (c < 26 ? col26(c) : col26(Math.floor(c/26)-1)+col26(c%26)) + (r+1); }
-
-  var sheetRows = '';
-  var totalCols = days.length + 1;
-
-  // header row
-  sheetRows += '<row r="1" ht="18" customHeight="1">';
-  sheetRows += '<c r="'+cellRef(0,0)+'" t="s" s="'+xfHeader+'"><v>'+addSS('Time')+'</v></c>';
-  for (var di4 = 0; di4 < days.length; di4++) {
-    var sv = addSS(days[di4].label + ' ' + days[di4].date);
-    sheetRows += '<c r="'+cellRef(0,di4+1)+'" t="s" s="'+xfHeader+'"><v>'+sv+'</v></c>';
-  }
+  // Header row
+  S('Time');
+  for(var di=0;di<days.length;di++) S(days[di].label+' '+days[di].date);
+  sheetRows += '<row r="1" ht="24" customHeight="1">';
+  sheetRows += '<c r="'+cr(0,0)+'" t="s" s="'+XF_HDR+'"><v>'+S('Time')+'</v></c>';
+  for(var di2=0;di2<days.length;di2++)
+    sheetRows += '<c r="'+cr(0,di2+1)+'" t="s" s="'+XF_HDR+'"><v>'+S(days[di2].label+' '+days[di2].date)+'</v></c>';
   sheetRows += '</row>';
+  rowIdx++;
 
-  // data rows
-  for (var si2 = 0; si2 < slots.length; si2++) {
-    var rowIdx = si2 + 1;
-    sheetRows += '<row r="'+(rowIdx+1)+'" ht="18" customHeight="1">';
-    sheetRows += '<c r="'+cellRef(rowIdx,0)+'" t="s" s="'+xfTime+'"><v>'+addSS(slots[si2])+'</v></c>';
-    for (var di5 = 0; di5 < days.length; di5++) {
-      var info = lookup[days[di5].key][slots[si2]];
-      if (info) {
-        var xfIdx = info.isStart ? catXfBold[info.cls]||xfEmpty : catXf[info.cls]||xfEmpty;
-        var sv2 = addSS(info.name);
-        sheetRows += '<c r="'+cellRef(rowIdx,di5+1)+'" t="s" s="'+xfIdx+'"><v>'+sv2+'</v></c>';
+  var merges = []; // collect merge ranges
+
+  // For each start time, emit rows
+  for(var si=0;si<startTimes.length;si++){
+    var st = startTimes[si];
+    var timeLabel = fmt(st);
+
+    // find all meetings at this start time across days
+    var hasMeeting = false;
+    var mCols = []; // per day: meeting or null
+    for(var di3=0;di3<days.length;di3++){
+      var mm2 = meetingsByDayTime[days[di3].key+'|'+st] || null;
+      mCols.push(mm2);
+      if(mm2) hasMeeting=true;
+    }
+    if(!hasMeeting) continue;
+
+    // determine how many sub-rows: name + time range + tentative (if any)
+    var hasTent = mCols.some(function(m2){return m2&&m2.tentative;});
+    var subRows = hasTent ? 3 : 2;
+
+    // emit sub-rows
+    for(var sr=0;sr<subRows;sr++){
+      var rNum = rowIdx + sr;
+      sheetRows += '<row r="'+(rNum+1)+'" ht="16" customHeight="1">';
+
+      // time column: only first sub-row gets the label, rest empty
+      if(sr===0){
+        sheetRows += '<c r="'+cr(rNum,0)+'" t="s" s="'+XF_TIME+'"><v>'+S(timeLabel)+'</v></c>';
+        // merge time cell vertically if subRows > 1
+        if(subRows > 1) merges.push({s:{r:rNum,c:0},e:{r:rNum+subRows-1,c:0}});
       } else {
-        sheetRows += '<c r="'+cellRef(rowIdx,di5+1)+'" t="s" s="'+xfEmpty+'"><v>'+addSS('')+'</v></c>';
+        sheetRows += '<c r="'+cr(rNum,0)+'" t="s" s="'+XF_TIME+'"><v>'+S('')+'</v></c>';
       }
+
+      // day columns
+      for(var di4=0;di4<days.length;di4++){
+        var m3 = mCols[di4];
+        var cellVal, xfIdx;
+        if(m3){
+          var cs = catStyles[m3.cls] || catStyles['c-trader'];
+          if(sr===0){
+            cellVal = m3.name;
+            xfIdx   = cs.name;
+          } else if(sr===1){
+            cellVal = fmt(m3.startMin) + ' – ' + fmt(m3.startMin + m3.durMin);
+            xfIdx   = cs.time;
+          } else {
+            cellVal = m3.tentative ? '⚠ Tentative' : '';
+            xfIdx   = cs.tent;
+          }
+        } else {
+          cellVal = '';
+          xfIdx   = XF_EMPTY;
+        }
+        S(cellVal);
+        sheetRows += '<c r="'+cr(rNum,di4+1)+'" t="s" s="'+xfIdx+'"><v>'+S(cellVal)+'</v></c>';
+      }
+      sheetRows += '</row>';
     }
+    rowIdx += subRows;
+
+    // spacer row between meeting blocks
+    sheetRows += '<row r="'+(rowIdx+1)+'" ht="6" customHeight="1">';
+    sheetRows += '<c r="'+cr(rowIdx,0)+'" t="s" s="'+XF_EMPTY+'"><v>'+S('')+'</v></c>';
+    for(var di5=0;di5<days.length;di5++)
+      sheetRows += '<c r="'+cr(rowIdx,di5+1)+'" t="s" s="'+XF_EMPTY+'"><v>'+S('')+'</v></c>';
     sheetRows += '</row>';
+    rowIdx++;
   }
 
-  var sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
-    + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-    + '<sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="1" topLeftCell="B2" activePane="bottomRight" state="frozen"/></sheetView></sheetViews>'
-    + '<sheetFormatPr defaultRowHeight="18"/>'
-    + '<cols>'
-    + '<col min="1" max="1" width="8" customWidth="1"/>'
-    + '<col min="2" max="'+(totalCols)+'" width="26" customWidth="1"/>'
-    + '</cols>'
-    + '<sheetData>' + sheetRows + '</sheetData>'
-    + '</worksheet>';
+  // ── MERGE CELLS XML ──────────────────────────────────────────
+  var mergeXml = '';
+  if(merges.length>0){
+    mergeXml = '<mergeCells count="'+merges.length+'">';
+    for(var mgi=0;mgi<merges.length;mgi++){
+      var mg=merges[mgi];
+      mergeXml += '<mergeCell ref="'+cr(mg.s.r,mg.s.c)+':'+cr(mg.e.r,mg.e.c)+'"/>';
+    }
+    mergeXml += '</mergeCells>';
+  }
 
-  var ssXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="'+ss.length+'" uniqueCount="'+ss.length+'">'
-    + ss.map(function(s){ return '<si><t xml:space="preserve">'+xe(s)+'</t></si>'; }).join('')
-    + '</sst>';
+  // ── STYLES XML ───────────────────────────────────────────────
+  var fontsXml='<fonts count="'+fontList.length+'">';
+  for(var fi=0;fi<fontList.length;fi++){
+    var f=fontList[fi];
+    fontsXml+='<font><sz val="'+f.sz+'"/><name val="Calibri"/><color rgb="'+f.color+'"/>'
+      +(f.bold?'<b/>':'')+(f.italic?'<i/>':'')+'</font>';
+  }
+  fontsXml+='</fonts>';
 
-  var wbXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
-    + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-    + '<sheets><sheet name="Schedule" sheetId="1" r:id="rId1"/></sheets>'
-    + '</workbook>';
+  var fillsXml='<fills count="'+(fillListFinal.length+2)+'">'
+    +'<fill><patternFill patternType="none"/></fill>'
+    +'<fill><patternFill patternType="gray125"/></fill>';
+  for(var fli=0;fli<fillListFinal.length;fli++)
+    fillsXml+='<fill><patternFill patternType="solid"><fgColor rgb="'+fillListFinal[fli]+'"/><bgColor indexed="64"/></patternFill></fill>';
+  fillsXml+='</fills>';
 
-  var wbRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
-    + '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
-    + '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
-    + '</Relationships>';
+  var bordersXml='<borders count="'+borderList.length+'">';
+  for(var bi=0;bi<borderList.length;bi++){
+    var b=borderList[bi];
+    bordersXml+='<border>';
+    bordersXml+=b.left?'<left style="medium"><color rgb="'+b.left+'"/></left>':'<left style="thin"><color rgb="FFD1D9E6"/></left>';
+    bordersXml+='<right style="thin"><color rgb="FFD1D9E6"/></right>'
+      +'<top style="'+b.top+'"><color rgb="FFD1D9E6"/></top>'
+      +'<bottom style="thin"><color rgb="FFD1D9E6"/></bottom>'
+      +'</border>';
+  }
+  bordersXml+='</borders>';
 
-  var pkgRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
-    + '</Relationships>';
+  var cellXfsXml='<cellXfs count="'+xfList.length+'">';
+  for(var xi=0;xi<xfList.length;xi++){
+    var x=xfList[xi];
+    cellXfsXml+='<xf numFmtId="0" fontId="'+x.fontId+'" fillId="'+x.fillId+'" borderId="'+x.borderId+'" xfId="0"'
+      +' applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">'
+      +'<alignment horizontal="'+x.halign+'" vertical="center" wrapText="0"/></xf>';
+  }
+  cellXfsXml+='</cellXfs>';
 
-  var contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-    + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-    + '<Default Extension="xml" ContentType="application/xml"/>'
-    + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-    + '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
-    + '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
-    + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
-    + '</Types>';
+  var stylesXml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    +fontsXml+fillsXml+bordersXml
+    +'<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+    +cellXfsXml
+    +'<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+    +'</styleSheet>';
 
-  // Build zip using JSZip-like approach — we'll use the XLSX lib just for zip packaging
-  var files = {
-    '[Content_Types].xml': contentTypes,
-    '_rels/.rels': pkgRels,
-    'xl/workbook.xml': wbXml,
+  // ── SHEET XML ────────────────────────────────────────────────
+  var sheetXml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    +' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    +'<sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="1" topLeftCell="B2" activePane="bottomRight" state="frozen"/></sheetView></sheetViews>'
+    +'<sheetFormatPr defaultRowHeight="16"/>'
+    +'<cols><col min="1" max="1" width="9" customWidth="1"/>'
+    +'<col min="2" max="'+(days.length+1)+'" width="30" customWidth="1"/></cols>'
+    +'<sheetData>'+sheetRows+'</sheetData>'
+    +mergeXml
+    +'</worksheet>';
+
+  // ── SHARED STRINGS XML ───────────────────────────────────────
+  var ssXml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="'+ss.length+'" uniqueCount="'+ss.length+'">'
+    +ss.map(function(s){return'<si><t xml:space="preserve">'+xe(s)+'</t></si>';}).join('')
+    +'</sst>';
+
+  var wbXml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    +' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    +'<sheets><sheet name="Schedule" sheetId="1" r:id="rId1"/></sheets>'
+    +'</workbook>';
+
+  var wbRels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    +'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+    +'<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
+    +'<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+    +'</Relationships>';
+
+  var pkgRels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    +'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+    +'</Relationships>';
+
+  var contentTypes='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    +'<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    +'<Default Extension="xml" ContentType="application/xml"/>'
+    +'<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+    +'<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+    +'<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+    +'<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+    +'</Types>';
+
+  // ── BUILD ZIP ────────────────────────────────────────────────
+  var enc=new TextEncoder();
+  var entries={
+    '[Content_Types].xml':        contentTypes,
+    '_rels/.rels':                pkgRels,
+    'xl/workbook.xml':            wbXml,
     'xl/_rels/workbook.xml.rels': wbRels,
-    'xl/worksheets/sheet1.xml': sheetXml,
-    'xl/sharedStrings.xml': ssXml,
-    'xl/styles.xml': stylesXml
+    'xl/worksheets/sheet1.xml':   sheetXml,
+    'xl/sharedStrings.xml':       ssXml,
+    'xl/styles.xml':              stylesXml
   };
-
-  // Use XLSX.zip_add_file to build the package
-  var zip = XLSX.utils.book_new();
-  zip.__zip = {};
-  var out = XLSX.write({
-    SheetNames: ['Schedule'],
-    Sheets: { 'Schedule': XLSX.utils.aoa_to_sheet([['']]) }
-  }, {type:'base64', bookType:'xlsx'});
-
-  // Actually, build zip manually using the fflate/zip bundled in XLSX
-  // Simpler: inject our XML files into the XLSX zip directly
-  var wb2 = XLSX.utils.book_new();
-  var ws2 = XLSX.utils.aoa_to_sheet([['']]);
-  XLSX.utils.book_append_sheet(wb2, ws2, 'Schedule');
-  // Override the internal files
-  if (!wb2.vbaraw) wb2.vbaraw = null;
-  wb2.Custprops = {};
-
-  // Inject via the internal zip approach
-  var rawOut = XLSX.write(wb2, {type:'binary', bookType:'xlsx'});
-
-  // We need to rebuild from scratch — use Blob with zip
-  // Build zip using base64 encoding of each file
-  function strToUint8(str) {
-    var arr = new Uint8Array(str.length);
-    for (var i = 0; i < str.length; i++) arr[i] = str.charCodeAt(i) & 0xFF;
-    return arr;
+  var locals=[], centrals=[], off=0;
+  var names=Object.keys(entries);
+  for(var ni=0;ni<names.length;ni++){
+    var name=names[ni], data=enc.encode(entries[name]), nameb=enc.encode(name), crc=crc32(data);
+    var local=cat(new Uint8Array([0x50,0x4B,0x03,0x04]),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(nameb.length),u16(0),nameb,data);
+    var cent=cat(new Uint8Array([0x50,0x4B,0x01,0x02]),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(nameb.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(off),nameb);
+    locals.push(local); centrals.push(cent); off+=local.length;
   }
-
-  // Use the JSZip that's bundled inside XLSX
-  var JSZip = null;
-  // XLSX bundles its own zip — access it
-  if (typeof XLSX.CFB !== 'undefined') { /* old API */ }
-
-  // Cleanest approach: write a valid zip manually
-  // Since XLSX full build includes fflate, we can use XLSX.utils to write raw files
-  // Actually just use XLSX's internal zip writer directly:
-  var zip2 = new XLSX.utils.book_new().__proto__;
-
-  // Fallback: use the Data URI approach with a pre-built template
-  // Build the xlsx using raw zip construction via Uint8Array
-  function buildZip(entries) {
-    // Simple ZIP implementation
-    var files2 = [], central = [], offset = 0;
-    function crc32(data) {
-      var table = crc32.t || (crc32.t = (function(){var t=[],c,n,k;for(n=0;n<256;n++){c=n;for(k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c;}return t;})());
-      var crc = 0xFFFFFFFF;
-      for(var i=0;i<data.length;i++) crc=table[(crc^data[i])&0xFF]^(crc>>>8);
-      return (crc^0xFFFFFFFF)>>>0;
-    }
-    function u32le(n){var b=new Uint8Array(4);b[0]=n&255;b[1]=(n>>8)&255;b[2]=(n>>16)&255;b[3]=(n>>24)&255;return b;}
-    function u16le(n){return new Uint8Array([n&255,(n>>8)&255]);}
-    function concat(){var len=0,i,j,pos=0;for(i=0;i<arguments.length;i++)len+=arguments[i].length;var out=new Uint8Array(len);for(i=0;i<arguments.length;i++){for(j=0;j<arguments[i].length;j++)out[pos++]=arguments[i][j];}return out;}
-    var enc=new TextEncoder();
-    for(var name in entries){
-      var data=enc.encode(entries[name]);
-      var crc=crc32(data);
-      var nameb=enc.encode(name);
-      var local=concat(
-        new Uint8Array([0x50,0x4B,0x03,0x04]),// sig
-        u16le(20),u16le(0),u16le(0),           // version, flags, compression(stored)
-        u16le(0),u16le(0),                      // mod time, mod date
-        u32le(crc),u32le(data.length),u32le(data.length),
-        u16le(nameb.length),u16le(0),           // name len, extra len
-        nameb,data
-      );
-      var cent=concat(
-        new Uint8Array([0x50,0x4B,0x01,0x02]),
-        u16le(20),u16le(20),u16le(0),u16le(0),
-        u16le(0),u16le(0),
-        u32le(crc),u32le(data.length),u32le(data.length),
-        u16le(nameb.length),u16le(0),u16le(0),
-        u16le(0),u16le(0),u32le(0),
-        u32le(offset),nameb
-      );
-      files2.push(local); central.push(cent); offset+=local.length;
-    }
-    var centData=concat.apply(null,central);
-    var eocd=concat(
-      new Uint8Array([0x50,0x4B,0x05,0x06]),
-      u16le(0),u16le(0),
-      u16le(central.length),u16le(central.length),
-      u32le(centData.length),u32le(offset),u16le(0)
-    );
-    return concat.apply(null,files2.concat([centData,eocd]));
-  }
-
-  var zipData = buildZip(files);
-  var blob = new Blob([zipData], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  var sname = (document.getElementById('pageTitle').textContent||'Schedule').trim();
-  a.download = sname + '.xlsx';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
+  var cd=cat.apply(null,centrals);
+  var eocd=cat(new Uint8Array([0x50,0x4B,0x05,0x06]),u16(0),u16(0),u16(centrals.length),u16(centrals.length),u32(cd.length),u32(off),u16(0));
+  var zip=cat.apply(null,locals.concat([cd,eocd]));
+  var blob=new Blob([zip],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=(document.getElementById('pageTitle').textContent||'Schedule').trim()+'.xlsx';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);
 });
 
 // GHOST
