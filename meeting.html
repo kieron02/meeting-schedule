@@ -550,7 +550,7 @@ document.getElementById('btnExcel').addEventListener('click', function() {
     wsData.push(row);
   }
 
-  var wb = XLSX.utils.book_new();
+  var wb = XLSX.utils.book_new(); wb.SSF = XLSX.SSF; 
   var ws = XLSX.utils.aoa_to_sheet(wsData);
 
   ws['!cols'] = [{wch:7}];
@@ -586,7 +586,7 @@ document.getElementById('btnExcel').addEventListener('click', function() {
 
   var sname = (document.getElementById('pageTitle').textContent||'Schedule').trim();
   XLSX.utils.book_append_sheet(wb, ws, 'Schedule');
-  XLSX.writeFile(wb, sname + '.xlsx');
+  XLSX.writeFile(wb, sname + '.xlsx', {cellStyles: true, bookSST: false});
 });
 
 // GHOST
