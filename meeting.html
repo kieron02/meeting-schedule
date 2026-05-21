@@ -45,9 +45,10 @@ header h1{font-size:17px;font-weight:600;letter-spacing:-.3px;flex:1;min-width:0
 .day-col{flex:1;min-width:180px;background:var(--surface);display:flex;flex-direction:column;}
 .day-hdr{height:var(--HDR);display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--surface2);border-bottom:1px solid var(--border);gap:2px;flex-shrink:0;position:sticky;top:0;z-index:15;padding:0 28px;}
 .day-hdr .dow{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;}
-.day-hdr .dt{font-size:13px;font-weight:600;cursor:pointer;border-bottom:1px dashed transparent;transition:border-color .15s;}
-.day-hdr .dt:hover{border-bottom-color:var(--muted);}
-.day-hdr .dt-edit{display:none;background:var(--surface);border:1px solid var(--accent);border-radius:5px;color:var(--text);font-size:12px;padding:2px 6px;width:100px;text-align:center;}
+.day-hdr .dt{font-size:13px;font-weight:600;cursor:pointer;border-bottom:1px dashed transparent;transition:border-color .15s;position:relative;}
+.day-hdr .dt:hover{border-bottom-color:var(--accent);}
+.day-hdr .dt:hover::after{content:'✎';font-size:9px;color:var(--accent);margin-left:4px;vertical-align:super;}
+.day-hdr .dt-edit{display:none;background:#fff;border:2px solid var(--accent);border-radius:6px;color:var(--text);font-size:12px;font-weight:600;padding:3px 8px;width:110px;text-align:center;box-shadow:0 2px 8px rgba(79,110,247,.2);}
 .day-hdr .dt-edit.show{display:block;}
 .day-hdr .dt.hidden{display:none;}
 .remove-day-btn{position:absolute;top:6px;right:6px;width:18px;height:18px;border-radius:4px;background:rgba(225,29,72,.1);border:none;color:#be123c;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s;}
@@ -392,7 +393,11 @@ document.getElementById('addDayBtn').addEventListener('click',function(){
   var nextDate,dowKey,dowLabel;
   try{
     var parts=lastDay.date.split(' ');
-    var base=new Date(new Date().getFullYear(),months[parts[1]],parseInt(parts[0]));
+    var yr = new Date().getFullYear();
+    // if the month looks like it's in the past this year, assume next year
+    var testDate = new Date(yr, months[parts[1]], parseInt(parts[0]));
+    if (testDate < new Date()) { /* use same year, could be 2026 already */ }
+    var base=new Date(yr,months[parts[1]],parseInt(parts[0]));
     base.setDate(base.getDate()+1);
     nextDate=base.getDate()+' '+MONTHS[base.getMonth()];
     dowKey=DOW[base.getDay()];dowLabel=DOWL[base.getDay()];
