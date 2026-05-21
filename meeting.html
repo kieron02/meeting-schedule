@@ -7,7 +7,6 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 <style>
 :root{--bg:#f0f4f8;--surface:#fff;--surface2:#e8edf5;--border:#d1d9e6;--text:#1a2035;--muted:#7a8aaa;--accent:#4f6ef7;--green:#16a34a;--HOUR:80px;--TIME-W:58px;--HDR:52px;}
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -574,85 +573,7 @@ document.getElementById('excelBtn').addEventListener('click', function() {
     }
   }
 
-  // Build header row: Time | Day1 | Day2 | ...
-  var headers = ['Time'];
-  days.forEach(function(d) { headers.push(d.label + '
-' + d.date); });
 
-  // Build a lookup: dayKey -> { "08:00": meetingName, "08:15": meetingName, ... }
-  var lookup = {};
-  days.forEach(function(d) { lookup[d.key] = {}; });
-
-  meetings.forEach(function(m) {
-    var startAbs = DAY_START_H * 60 + m.startMin; // absolute minutes from midnight
-    var endAbs   = startAbs + m.durMin;
-    // fill every 15-min slot this meeting occupies
-    for (var t = startAbs; t < endAbs; t += 15) {
-      var hh = Math.floor(t / 60), mm = t % 60;
-      var key = pad(hh) + ':' + pad(mm);
-      if (lookup[m.day]) {
-        if (!lookup[m.day][key]) lookup[m.day][key] = m.name;
-        else lookup[m.day][key] += ' / ' + m.name; // overlap
-      }
-    }
-  });
-
-  // Build rows
-  var wsData = [headers];
-  INTERVALS.forEach(function(timeStr) {
-    var row = [timeStr];
-    days.forEach(function(d) {
-      row.push(lookup[d.key][timeStr] || '');
-    });
-    wsData.push(row);
-  });
-
-  // Create workbook
-  var wb = XLSX.utils.book_new();
-  var ws = XLSX.utils.aoa_to_sheet(wsData);
-
-  // Column widths
-  ws['!cols'] = [{ wch: 8 }];
-  days.forEach(function() { ws['!cols'].push({ wch: 28 }); });
-
-  // Style header row (grey bg, bold) — basic
-  var range = XLSX.utils.decode_range(ws['!ref']);
-  for (var C = range.s.c; C <= range.e.c; C++) {
-    var cell = ws[XLSX.utils.encode_cell({ r: 0, c: C })];
-    if (cell) cell.s = { font: { bold: true }, fill: { fgColor: { rgb: 'D1D9E6' } }, alignment: { wrapText: true, vertical: 'center', horizontal: 'center' } };
-  }
-
-  // Colour meeting cells by category
-  var catColors = { 'c-sasg': 'FEF3C7', 'c-trader': 'DBEAFE', 'c-formosa': 'DCFCE7', 'c-hyundai': 'DCFCE7', 'c-chinasteel': 'DCFCE7', 'c-hoaphat': 'DCFCE7' };
-  meetings.forEach(function(m) {
-    var dayIdx = days.findIndex(function(d) { return d.key === m.day; });
-    if (dayIdx === -1) return;
-    var col = dayIdx + 1;
-    var startAbs = DAY_START_H * 60 + m.startMin;
-    var endAbs   = startAbs + m.durMin;
-    for (var t = startAbs; t < endAbs; t += 15) {
-      var hh = Math.floor(t / 60), mm2 = t % 60;
-      var timeStr2 = pad(hh) + ':' + pad(mm2);
-      var rowIdx = INTERVALS.indexOf(timeStr2);
-      if (rowIdx === -1) continue;
-      var cellRef = XLSX.utils.encode_cell({ r: rowIdx + 1, c: col });
-      if (ws[cellRef]) {
-        ws[cellRef].s = {
-          fill: { fgColor: { rgb: catColors[m.cls] || 'DBEAFE' } },
-          alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
-          border: { bottom: { style: 'thin', color: { rgb: 'CCCCCC' } } }
-        };
-      }
-    }
-  });
-
-  // Freeze first row + first column
-  ws['!freeze'] = { xSplit: 1, ySplit: 1 };
-
-  var schedName = (document.getElementById('page-title').textContent || 'Schedule').trim();
-  XLSX.utils.book_append_sheet(wb, ws, 'Schedule');
-  XLSX.writeFile(wb, schedName.replace(/[^\w\s-]/g,'').trim() + '.xlsx');
-});
 
 // ── SAVE ─────────────────────────────────────────────────────────────────────
 document.getElementById('saveBtn').addEventListener('click',function(){
