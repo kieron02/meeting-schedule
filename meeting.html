@@ -58,6 +58,7 @@ header h1{font-size:17px;font-weight:600;letter-spacing:-.3px;flex:1;min-width:0
 .canvas{position:relative;width:100%;}
 .hl{position:absolute;left:0;right:0;height:1px;background:var(--border);pointer-events:none;}
 .hhl{position:absolute;left:0;right:0;height:1px;background:rgba(0,0,0,.04);pointer-events:none;}
+.qhl{position:absolute;left:0;right:0;height:1px;background:rgba(0,0,0,.02);pointer-events:none;}
 .qhl{position:absolute;left:0;right:0;height:1px;background:rgba(0,0,0,.03);pointer-events:none;}
 .meeting{position:absolute;left:4px;right:4px;border-radius:8px;padding:5px 26px 12px 9px;cursor:grab;display:flex;flex-direction:column;user-select:none;z-index:2;overflow-y:auto;overflow-x:hidden;transition:box-shadow .12s,opacity .12s;min-height:24px;}
 .meeting:hover{box-shadow:0 4px 20px rgba(0,0,0,.15);z-index:10;}
@@ -280,8 +281,9 @@ schedRef.on('value', function(snap) {
   suppressWrite = true;
   document.getElementById('page-title').textContent = data.name || 'Meeting Schedule';
   document.title = data.name || 'Meeting Schedule';
-  days     = data.days     ? Object.values(data.days)     : [];
-  meetings = data.meetings ? Object.values(data.meetings) : [];
+  function objVals(o){ if(!o) return []; if(Object.values) return Object.values(o); return Object.keys(o).map(function(k){return o[k];}); }
+  days     = objVals(data.days);
+  meetings = objVals(data.meetings);
   meetings.forEach(function(m){ var n=parseInt((m.id||'').replace(/\D/g,'')); if(!isNaN(n)&&n>uidCounter) uidCounter=n; });
   rebuildAll();
   setSyncStatus('', '● Live');
@@ -509,7 +511,7 @@ function startCopy(m) {
     (function(dayKey, cv) {
       cv._pasteHandler = function(e) {
         if (!pasteMode || !clipboard) return;
-        if (e.target.classList.contains('meeting') || e.target.closest('.meeting')) return;
+        if (e.target.classList.contains('meeting') || (e.target.closest && e.target.closest('.meeting'))) return;
         var cr = cv.getBoundingClientRect();
         var clickMin = snap(Math.max(0, pxToMin(e.clientY - cr.top)));
         pasteMeeting(dayKey, clickMin);
