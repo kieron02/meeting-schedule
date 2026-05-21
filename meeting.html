@@ -509,7 +509,7 @@ titleEl.addEventListener('focus',function(){lastTitle=titleEl.textContent.trim()
 titleEl.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();titleEl.blur();}if(e.key==='Escape'){titleEl.textContent=lastTitle;titleEl.blur();}});
 titleEl.addEventListener('blur',function(){var v=titleEl.textContent.trim();if(!v){titleEl.textContent=lastTitle;return;}if(v===lastTitle)return;document.title=v;sref.update({name:v});});
 
-// EXPORT EXCEL
+// EXPORT EXCEL — manual OpenXML/xlsx builder (no library needed for styles)
 document.getElementById('btnExcel').addEventListener('click', function() {
   var slots = [];
   for (var h = 8; h <= 18; h++) {
@@ -519,74 +519,309 @@ document.getElementById('btnExcel').addEventListener('click', function() {
     }
   }
 
-  var CAT_CLR = {'c-sasg':'FFEDD5','c-trader':'DBEAFE','c-formosa':'DCFCE7','c-hyundai':'DCFCE7','c-chinasteel':'DCFCE7','c-hoaphat':'DCFCE7'};
-  var CAT_BRD = {'c-sasg':'EA580C','c-trader':'1D4ED8','c-formosa':'15803D','c-hyundai':'15803D','c-chinasteel':'15803D','c-hoaphat':'15803D'};
+  // category -> fill colour (ARGB hex)
+  var CLR = {'c-sasg':'FFFFEDD5','c-trader':'FFDBEAFE','c-formosa':'FFDCFCE7','c-hyundai':'FFDCFCE7','c-chinasteel':'FFDCFCE7','c-hoaphat':'FFDCFCE7'};
+  var HDR_CLR = 'FFE8EDF5';
+  var TIME_CLR = 'FFF8FAFC';
+  var EMPTY_CLR = 'FFFFFFFF';
 
-  // lookup: dayKey -> slotKey -> {name, cls, isStart}
+  // build lookup
   var lookup = {};
   for (var di = 0; di < days.length; di++) lookup[days[di].key] = {};
   for (var mi = 0; mi < meetings.length; mi++) {
     var m = meetings[mi];
-    var sa = DS * 60 + m.startMin;
-    var ea = sa + m.durMin;
+    var sa = DS * 60 + m.startMin, ea = sa + m.durMin;
     for (var t = sa; t < ea; t += 15) {
       var k = p2(Math.floor(t/60)) + ':' + p2(t%60);
       if (lookup[m.day] && !lookup[m.day][k])
-        lookup[m.day][k] = { name: m.name, cls: m.cls, isStart: (t === sa) };
+        lookup[m.day][k] = { name: m.name, cls: m.cls, isStart: t === sa };
     }
   }
 
-  // build sheet data
-  var wsData = [];
-  var hdr = ['Time'];
-  for (var di2 = 0; di2 < days.length; di2++) hdr.push(days[di2].label + ' ' + days[di2].date);
-  wsData.push(hdr);
+  // XML escape
+  function xe(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  // shared strings
+  var ss = [], ssMap = {};
+  function addSS(v) {
+    var s = String(v||'');
+    if (ssMap[s] === undefined) { ssMap[s] = ss.length; ss.push(s); }
+    return ssMap[s];
+  }
+
+  // pre-populate shared strings
+  addSS('Time');
+  for (var di2 = 0; di2 < days.length; di2++) addSS(days[di2].label + ' ' + days[di2].date);
   for (var si = 0; si < slots.length; si++) {
-    var row = [slots[si]];
+    addSS(slots[si]);
     for (var di3 = 0; di3 < days.length; di3++) {
       var cell = lookup[days[di3].key][slots[si]];
-      row.push(cell ? cell.name : '');
-    }
-    wsData.push(row);
-  }
-
-  var wb = XLSX.utils.book_new(); wb.SSF = XLSX.SSF; 
-  var ws = XLSX.utils.aoa_to_sheet(wsData);
-
-  ws['!cols'] = [{wch:7}];
-  for (var dc = 0; dc < days.length; dc++) ws['!cols'].push({wch:26});
-  ws['!rows'] = [];
-  for (var rr = 0; rr <= slots.length; rr++) ws['!rows'].push({hpt:18});
-
-  var range = XLSX.utils.decode_range(ws['!ref']);
-  for (var R = range.s.r; R <= range.e.r; R++) {
-    for (var C = range.s.c; C <= range.e.c; C++) {
-      var ref = XLSX.utils.encode_cell({r:R,c:C});
-      if (!ws[ref]) ws[ref] = {t:'s',v:''};
-      var isHdr  = (R === 0);
-      var isTime = (C === 0 && R > 0);
-      var isHour = (R > 0 && slots[R-1] && slots[R-1].substr(3) === '00');
-      var info   = null;
-      if (R > 0 && C > 0 && days[C-1]) info = lookup[days[C-1].key][slots[R-1]];
-      ws[ref].s = {
-        fill: { patternType:'solid', fgColor:{ rgb: isHdr ? 'E8EDF5' : (isTime && isHour ? 'F0F4F8' : (info ? (CAT_CLR[info.cls]||'DBEAFE') : 'FFFFFF')) } },
-        font: { name:'Calibri', sz: isHdr?11:10, bold: isHdr||(info&&info.isStart), color:{ rgb: isTime?'7A8AAA':'1A2035' } },
-        alignment: { vertical:'center', horizontal: isHdr||isTime?'center':'left', wrapText:false },
-        border: {
-          top:    {style:'thin',color:{rgb: isHour&&!isHdr?'D1D9E6':'F0F4F8'}},
-          bottom: {style:'thin',color:{rgb:'F0F4F8'}},
-          left:   info ? {style:'medium',color:{rgb:CAT_BRD[info.cls]||'1D4ED8'}} : {style:'thin',color:{rgb:'F0F4F8'}},
-          right:  {style:'thin',color:{rgb:'F0F4F8'}}
-        }
-      };
+      if (cell) addSS(cell.name);
     }
   }
 
-  ws['!freeze'] = {xSplit:1, ySplit:1, topLeftCell:'B2', activePane:'bottomRight'};
+  // styles: numFmts, fonts, fills, borders, cellXfs
+  // fill index map: 0=none,1=gray(required by spec),2=header,3=time,4=empty,5+=category
+  var fillColors = [HDR_CLR, TIME_CLR, EMPTY_CLR];
+  var catKeys = Object.keys(CLR);
+  for (var ci = 0; ci < catKeys.length; ci++) {
+    if (fillColors.indexOf(CLR[catKeys[ci]]) === -1) fillColors.push(CLR[catKeys[ci]]);
+  }
 
+  function fillXml(color) {
+    return '<fill><patternFill patternType="solid"><fgColor rgb="'+color+'"/><bgColor indexed="64"/></patternFill></fill>';
+  }
+
+  var fillsXml = '<fills count="'+(fillColors.length+2)+'">'
+    + '<fill><patternFill patternType="none"/></fill>'   // index 0 - required
+    + '<fill><patternFill patternType="gray125"/></fill>' // index 1 - required
+    + fillColors.map(fillXml).join('') // index 2+ = our fills
+    + '</fills>';
+
+  // fonts: 0=normal, 1=bold header
+  var fontsXml = '<fonts count="3">'
+    + '<font><sz val="10"/><name val="Calibri"/><color rgb="FF1A2035"/></font>'
+    + '<font><sz val="11"/><b/><name val="Calibri"/><color rgb="FF1A2035"/></font>'
+    + '<font><sz val="10"/><name val="Calibri"/><color rgb="FF7A8AAA"/></font>'
+    + '</fonts>';
+
+  // borders: 0=none, 1=light grey all round, 2=medium left
+  var bc = 'FF D1D9E6'.replace(/ /g,'');
+  var bordersXml = '<borders count="3">'
+    + '<border><left/><right/><top/><bottom/></border>'
+    + '<border><left style="thin"><color rgb="FFD1D9E6"/></left><right style="thin"><color rgb="FFD1D9E6"/></right><top style="thin"><color rgb="FFD1D9E6"/></top><bottom style="thin"><color rgb="FFD1D9E6"/></bottom></border>'
+    + '<border><left style="medium"><color rgb="FF1D4ED8"/></left><right style="thin"><color rgb="FFD1D9E6"/></right><top style="thin"><color rgb="FFD1D9E6"/></top><bottom style="thin"><color rgb="FFD1D9E6"/></bottom></border>'
+    + '</borders>';
+
+  // build category border map
+  var catBorderClr = {'c-sasg':'FFEA580C','c-trader':'FF1D4ED8','c-formosa':'FF15803D','c-hyundai':'FF15803D','c-chinasteel':'FF15803D','c-hoaphat':'FF15803D'};
+
+  // xf index builder
+  var xfs = [];
+  function addXf(fontId, fillIdx, borderId, bold) {
+    var key = fontId+'|'+fillIdx+'|'+borderId+'|'+bold;
+    for (var i = 0; i < xfs.length; i++) if (xfs[i].key === key) return i;
+    xfs.push({key:key, fontId:fontId, fillIdx:fillIdx, borderId:borderId, bold:bold});
+    return xfs.length - 1;
+  }
+
+  // pre-define xfs
+  var xfHeader   = addXf(1, 2, 1, true);   // bold, header fill, light border
+  var xfTime     = addXf(2, 3, 1, false);   // grey font, time fill
+  var xfEmpty    = addXf(0, 4, 1, false);   // normal, white
+
+  // per-category xf (normal + bold for first row)
+  var catXf = {}, catXfBold = {};
+  for (var ci2 = 0; ci2 < catKeys.length; ci2++) {
+    var ck = catKeys[ci2];
+    var fi = fillColors.indexOf(CLR[ck]) + 2; // +2 for the two required fills
+    // custom border with category colour left side
+    catXf[ck]     = addXf(0, fi, 1, false);
+    catXfBold[ck] = addXf(0, fi, 1, true);
+  }
+
+  var xfsXml = '<cellXfs count="'+xfs.length+'">';
+  for (var xi = 0; xi < xfs.length; xi++) {
+    var x = xfs[xi];
+    xfsXml += '<xf numFmtId="0" fontId="'+x.fontId+'" fillId="'+x.fillIdx+'" borderId="'+x.borderId+'" xfId="0"'
+      + (x.bold ? ' applyFont="1"' : '')
+      + ' applyFill="1" applyBorder="1" applyAlignment="1">'
+      + '<alignment horizontal="'+(x.fontId===2?'center':'left')+'" vertical="center"/>'
+      + '</xf>';
+  }
+  xfsXml += '</cellXfs>';
+
+  var stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    + fontsXml + fillsXml + bordersXml
+    + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+    + xfsXml
+    + '</styleSheet>';
+
+  // sheet data
+  function col26(n) { return String.fromCharCode(65 + n); }
+  function cellRef(r, c) { return (c < 26 ? col26(c) : col26(Math.floor(c/26)-1)+col26(c%26)) + (r+1); }
+
+  var sheetRows = '';
+  var totalCols = days.length + 1;
+
+  // header row
+  sheetRows += '<row r="1" ht="18" customHeight="1">';
+  sheetRows += '<c r="'+cellRef(0,0)+'" t="s" s="'+xfHeader+'"><v>'+addSS('Time')+'</v></c>';
+  for (var di4 = 0; di4 < days.length; di4++) {
+    var sv = addSS(days[di4].label + ' ' + days[di4].date);
+    sheetRows += '<c r="'+cellRef(0,di4+1)+'" t="s" s="'+xfHeader+'"><v>'+sv+'</v></c>';
+  }
+  sheetRows += '</row>';
+
+  // data rows
+  for (var si2 = 0; si2 < slots.length; si2++) {
+    var rowIdx = si2 + 1;
+    sheetRows += '<row r="'+(rowIdx+1)+'" ht="18" customHeight="1">';
+    sheetRows += '<c r="'+cellRef(rowIdx,0)+'" t="s" s="'+xfTime+'"><v>'+addSS(slots[si2])+'</v></c>';
+    for (var di5 = 0; di5 < days.length; di5++) {
+      var info = lookup[days[di5].key][slots[si2]];
+      if (info) {
+        var xfIdx = info.isStart ? catXfBold[info.cls]||xfEmpty : catXf[info.cls]||xfEmpty;
+        var sv2 = addSS(info.name);
+        sheetRows += '<c r="'+cellRef(rowIdx,di5+1)+'" t="s" s="'+xfIdx+'"><v>'+sv2+'</v></c>';
+      } else {
+        sheetRows += '<c r="'+cellRef(rowIdx,di5+1)+'" t="s" s="'+xfEmpty+'"><v>'+addSS('')+'</v></c>';
+      }
+    }
+    sheetRows += '</row>';
+  }
+
+  var sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    + '<sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="1" topLeftCell="B2" activePane="bottomRight" state="frozen"/></sheetView></sheetViews>'
+    + '<sheetFormatPr defaultRowHeight="18"/>'
+    + '<cols>'
+    + '<col min="1" max="1" width="8" customWidth="1"/>'
+    + '<col min="2" max="'+(totalCols)+'" width="26" customWidth="1"/>'
+    + '</cols>'
+    + '<sheetData>' + sheetRows + '</sheetData>'
+    + '</worksheet>';
+
+  var ssXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="'+ss.length+'" uniqueCount="'+ss.length+'">'
+    + ss.map(function(s){ return '<si><t xml:space="preserve">'+xe(s)+'</t></si>'; }).join('')
+    + '</sst>';
+
+  var wbXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    + '<sheets><sheet name="Schedule" sheetId="1" r:id="rId1"/></sheets>'
+    + '</workbook>';
+
+  var wbRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+    + '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
+    + '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+    + '</Relationships>';
+
+  var pkgRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+    + '</Relationships>';
+
+  var contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    + '<Default Extension="xml" ContentType="application/xml"/>'
+    + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+    + '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+    + '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+    + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+    + '</Types>';
+
+  // Build zip using JSZip-like approach — we'll use the XLSX lib just for zip packaging
+  var files = {
+    '[Content_Types].xml': contentTypes,
+    '_rels/.rels': pkgRels,
+    'xl/workbook.xml': wbXml,
+    'xl/_rels/workbook.xml.rels': wbRels,
+    'xl/worksheets/sheet1.xml': sheetXml,
+    'xl/sharedStrings.xml': ssXml,
+    'xl/styles.xml': stylesXml
+  };
+
+  // Use XLSX.zip_add_file to build the package
+  var zip = XLSX.utils.book_new();
+  zip.__zip = {};
+  var out = XLSX.write({
+    SheetNames: ['Schedule'],
+    Sheets: { 'Schedule': XLSX.utils.aoa_to_sheet([['']]) }
+  }, {type:'base64', bookType:'xlsx'});
+
+  // Actually, build zip manually using the fflate/zip bundled in XLSX
+  // Simpler: inject our XML files into the XLSX zip directly
+  var wb2 = XLSX.utils.book_new();
+  var ws2 = XLSX.utils.aoa_to_sheet([['']]);
+  XLSX.utils.book_append_sheet(wb2, ws2, 'Schedule');
+  // Override the internal files
+  if (!wb2.vbaraw) wb2.vbaraw = null;
+  wb2.Custprops = {};
+
+  // Inject via the internal zip approach
+  var rawOut = XLSX.write(wb2, {type:'binary', bookType:'xlsx'});
+
+  // We need to rebuild from scratch — use Blob with zip
+  // Build zip using base64 encoding of each file
+  function strToUint8(str) {
+    var arr = new Uint8Array(str.length);
+    for (var i = 0; i < str.length; i++) arr[i] = str.charCodeAt(i) & 0xFF;
+    return arr;
+  }
+
+  // Use the JSZip that's bundled inside XLSX
+  var JSZip = null;
+  // XLSX bundles its own zip — access it
+  if (typeof XLSX.CFB !== 'undefined') { /* old API */ }
+
+  // Cleanest approach: write a valid zip manually
+  // Since XLSX full build includes fflate, we can use XLSX.utils to write raw files
+  // Actually just use XLSX's internal zip writer directly:
+  var zip2 = new XLSX.utils.book_new().__proto__;
+
+  // Fallback: use the Data URI approach with a pre-built template
+  // Build the xlsx using raw zip construction via Uint8Array
+  function buildZip(entries) {
+    // Simple ZIP implementation
+    var files2 = [], central = [], offset = 0;
+    function crc32(data) {
+      var table = crc32.t || (crc32.t = (function(){var t=[],c,n,k;for(n=0;n<256;n++){c=n;for(k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c;}return t;})());
+      var crc = 0xFFFFFFFF;
+      for(var i=0;i<data.length;i++) crc=table[(crc^data[i])&0xFF]^(crc>>>8);
+      return (crc^0xFFFFFFFF)>>>0;
+    }
+    function u32le(n){var b=new Uint8Array(4);b[0]=n&255;b[1]=(n>>8)&255;b[2]=(n>>16)&255;b[3]=(n>>24)&255;return b;}
+    function u16le(n){return new Uint8Array([n&255,(n>>8)&255]);}
+    function concat(){var len=0,i,j,pos=0;for(i=0;i<arguments.length;i++)len+=arguments[i].length;var out=new Uint8Array(len);for(i=0;i<arguments.length;i++){for(j=0;j<arguments[i].length;j++)out[pos++]=arguments[i][j];}return out;}
+    var enc=new TextEncoder();
+    for(var name in entries){
+      var data=enc.encode(entries[name]);
+      var crc=crc32(data);
+      var nameb=enc.encode(name);
+      var local=concat(
+        new Uint8Array([0x50,0x4B,0x03,0x04]),// sig
+        u16le(20),u16le(0),u16le(0),           // version, flags, compression(stored)
+        u16le(0),u16le(0),                      // mod time, mod date
+        u32le(crc),u32le(data.length),u32le(data.length),
+        u16le(nameb.length),u16le(0),           // name len, extra len
+        nameb,data
+      );
+      var cent=concat(
+        new Uint8Array([0x50,0x4B,0x01,0x02]),
+        u16le(20),u16le(20),u16le(0),u16le(0),
+        u16le(0),u16le(0),
+        u32le(crc),u32le(data.length),u32le(data.length),
+        u16le(nameb.length),u16le(0),u16le(0),
+        u16le(0),u16le(0),u32le(0),
+        u32le(offset),nameb
+      );
+      files2.push(local); central.push(cent); offset+=local.length;
+    }
+    var centData=concat.apply(null,central);
+    var eocd=concat(
+      new Uint8Array([0x50,0x4B,0x05,0x06]),
+      u16le(0),u16le(0),
+      u16le(central.length),u16le(central.length),
+      u32le(centData.length),u32le(offset),u16le(0)
+    );
+    return concat.apply(null,files2.concat([centData,eocd]));
+  }
+
+  var zipData = buildZip(files);
+  var blob = new Blob([zipData], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
   var sname = (document.getElementById('pageTitle').textContent||'Schedule').trim();
-  XLSX.utils.book_append_sheet(wb, ws, 'Schedule');
-  XLSX.writeFile(wb, sname + '.xlsx', {cellStyles: true, bookSST: false});
+  a.download = sname + '.xlsx';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
 });
 
 // GHOST
