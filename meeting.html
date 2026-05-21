@@ -64,6 +64,18 @@ header h1{font-size:17px;font-weight:600;letter-spacing:-.3px;flex:1;min-width:0
 .card-btn{width:20px;height:20px;border-radius:4px;border:none;color:var(--text);font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
 .card-btn.edit{background:rgba(0,0,0,.08);}
 .card-btn.del{background:rgba(225,29,72,.12);color:#be123c;}
+.card-btn.copy{background:rgba(79,110,247,.12);color:#1d4ed8;}
+/* paste mode: canvas highlight + paste cursor */
+.canvas.paste-mode{cursor:copy;background:rgba(79,110,247,.04);}
+.canvas.paste-mode::after{content:'Click to paste';position:absolute;top:8px;left:50%;transform:translateX(-50%);font-size:10px;font-family:'DM Mono',monospace;color:#4f6ef7;background:#eff6ff;border:1px solid #bfdbfe;border-radius:20px;padding:2px 10px;pointer-events:none;z-index:30;}
+/* floating paste bar */
+#paste-bar{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a2035;color:#e8eaf0;font-size:12px;font-family:'DM Mono',monospace;padding:10px 18px;border-radius:30px;box-shadow:0 4px 20px rgba(0,0,0,.3);display:none;align-items:center;gap:12px;z-index:800;}
+#paste-bar.show{display:flex;}
+#paste-bar .pb-name{font-weight:600;color:#a5b4fc;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#paste-bar button{padding:4px 12px;border-radius:20px;border:none;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Mono',monospace;}
+#paste-bar .pb-hint{opacity:.6;font-size:11px;}
+#paste-bar .pb-cancel{background:rgba(255,255,255,.1);color:#e8eaf0;}
+#paste-bar .pb-cancel:hover{background:rgba(255,255,255,.2);}
 .c-sasg   {background:#fff7ed;border-left:4px solid #ea580c;color:#7c2d12;}
 .c-trader {background:#eff6ff;border-left:4px solid #1d4ed8;color:#1e3a5f;}
 .c-formosa,.c-hyundai,.c-chinasteel,.c-hoaphat{background:#f0fdf4;border-left:4px solid #15803d;color:#14532d;}
@@ -133,6 +145,12 @@ header h1{font-size:17px;font-weight:600;letter-spacing:-.3px;flex:1;min-width:0
 </div>
 <p class="hint" id="hint-text">snaps to 15-min · click Save to sync changes</p>
 
+<div id="paste-bar">
+  <span class="pb-hint">📋 Copying:</span>
+  <span class="pb-name" id="pb-name"></span>
+  <span class="pb-hint">· Click any slot to paste</span>
+  <button class="pb-cancel" id="pb-cancel">✕ Cancel</button>
+</div>
 <div id="ghost-line"></div><div id="ghost-time"></div>
 <div id="tip"><div class="tn"></div><div class="tt"></div></div>
 
@@ -310,9 +328,10 @@ function renderCard(m){
   });
   pill.appendChild(dot);pill.appendChild(lbl);pill.appendChild(arr);pill.appendChild(sel);
   var actions=document.createElement('div');actions.className='card-actions';
-  var editBtn=document.createElement('button');editBtn.className='card-btn edit';editBtn.textContent='✎';
-  var delBtn=document.createElement('button');delBtn.className='card-btn del';delBtn.textContent='✕';
-  actions.appendChild(editBtn);actions.appendChild(delBtn);
+  var editBtn=document.createElement('button');editBtn.className='card-btn edit';editBtn.textContent='✎';editBtn.title='Edit';
+  var copyBtn=document.createElement('button');copyBtn.className='card-btn copy';copyBtn.textContent='⎘';copyBtn.title='Copy';
+  var delBtn=document.createElement('button');delBtn.className='card-btn del';delBtn.textContent='✕';delBtn.title='Delete';
+  actions.appendChild(editBtn);actions.appendChild(copyBtn);actions.appendChild(delBtn);
   var rh=document.createElement('div');rh.className='rhandle';
   card.appendChild(nameEl);card.appendChild(timeEl);card.appendChild(pill);
   if(m.tentative){var tb=document.createElement('span');tb.className='tent';tb.textContent='tentative';card.appendChild(tb);}
@@ -320,7 +339,7 @@ function renderCard(m){
   canvas.appendChild(card);
 
   card.addEventListener('mousedown',function(e){
-    if(e.target===rh||e.target===editBtn||e.target===delBtn||e.target===actions||e.target.classList.contains('cat-select'))return;
+    if(e.target===rh||e.target===editBtn||e.target===copyBtn||e.target===delBtn||e.target===actions||e.target.classList.contains('cat-select'))return;
     e.preventDefault();
     var rect=card.getBoundingClientRect(),offY=e.clientY-rect.top;
     card.classList.add('is-dragging');card.style.zIndex=50;hideTooltip();
@@ -350,6 +369,7 @@ function renderCard(m){
   });
 
   editBtn.addEventListener('click',function(e){e.stopPropagation();openEditModal(m.id);});
+  copyBtn.addEventListener('click',function(e){e.stopPropagation();startCopy(m);});
   delBtn.addEventListener('click',function(e){e.stopPropagation();openDelConfirm(m.id);});
   card.addEventListener('mouseenter',function(ev){showTooltip(ev,m);});
   card.addEventListener('mousemove',moveTooltip);
@@ -424,7 +444,64 @@ document.getElementById('delconfirm').addEventListener('click',function(){
   closeDelConfirm();
 });
 
-// ── SAVE ─────────────────────────────────────────────────────────
+// ── COPY / PASTE ─────────────────────────────────────────────────
+var clipboard = null; // holds the meeting being copied
+var pasteMode  = false;
+
+function startCopy(m) {
+  clipboard = m;
+  pasteMode = true;
+  document.getElementById('pb-name').textContent = m.name;
+  document.getElementById('paste-bar').classList.add('show');
+  // activate paste mode on all canvases
+  for (var k in canvasMap) canvasMap[k].classList.add('paste-mode');
+  // attach paste click listeners
+  for (var k in canvasMap) {
+    (function(dayKey, cv) {
+      cv._pasteHandler = function(e) {
+        if (!pasteMode || !clipboard) return;
+        if (e.target.classList.contains('meeting') || e.target.closest('.meeting')) return;
+        var cr = cv.getBoundingClientRect();
+        var clickMin = snap(Math.max(0, pxToMin(e.clientY - cr.top)));
+        pasteMeeting(dayKey, clickMin);
+      };
+      cv.addEventListener('click', cv._pasteHandler);
+    })(k, canvasMap[k]);
+  }
+}
+
+function pasteMeeting(dayKey, startMin) {
+  if (!clipboard) return;
+  var newM = {
+    id:       'm' + (++uidCounter),
+    day:      dayKey,
+    startMin: startMin,
+    durMin:   clipboard.durMin,
+    name:     clipboard.name,
+    cls:      clipboard.cls,
+    tentative:clipboard.tentative || false
+  };
+  meetings.push(newM);
+  renderCard(newM);
+  // keep paste mode active so user can paste again — cancel manually
+}
+
+function cancelPaste() {
+  pasteMode = false;
+  clipboard = null;
+  document.getElementById('paste-bar').classList.remove('show');
+  for (var k in canvasMap) {
+    canvasMap[k].classList.remove('paste-mode');
+    if (canvasMap[k]._pasteHandler) {
+      canvasMap[k].removeEventListener('click', canvasMap[k]._pasteHandler);
+      delete canvasMap[k]._pasteHandler;
+    }
+  }
+}
+
+document.getElementById('pb-cancel').addEventListener('click', cancelPaste);
+
+// ── SAVE ─────────────────────────────────────────────────────────────
 document.getElementById('saveBtn').addEventListener('click',function(){
   var btn=this; btn.disabled=true;
   setSyncStatus('syncing','↑ Saving…');
