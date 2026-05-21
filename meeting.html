@@ -232,7 +232,11 @@ var firebaseConfig = {
   messagingSenderId: "861137429545",
   appId:             "1:861137429545:web:a42ffa24bb7996b08ea838"
 };
-firebase.initializeApp(firebaseConfig);
+if (!firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+} else {
+  firebase.app(); // use existing app
+}
 var db = firebase.database();
 
 // Get schedule ID from URL
@@ -262,7 +266,15 @@ function setSyncStatus(cls, txt){
 }
 
 // ── FIREBASE LOAD ────────────────────────────────────────────────
+// Timeout — show error if Firebase doesn't respond in 8 seconds
+var firebaseTimeout = setTimeout(function() {
+  document.getElementById('page-title').textContent = 'Connection failed';
+  setSyncStatus('error', '✕ Cannot connect to Firebase');
+  document.getElementById('hint-text').textContent = '⚠ Check your Firebase rules are set to .read: true, .write: true';
+}, 8000);
+
 schedRef.on('value', function(snap) {
+  clearTimeout(firebaseTimeout);
   var data = snap.val();
   if (!data) { window.location.href='index.html'; return; }
   suppressWrite = true;
@@ -274,7 +286,11 @@ schedRef.on('value', function(snap) {
   rebuildAll();
   setSyncStatus('', '● Live');
   suppressWrite = false;
-}, function(){ setSyncStatus('error','✕ Offline'); });
+}, function(err) {
+  clearTimeout(firebaseTimeout);
+  setSyncStatus('error','✕ Offline — ' + (err.code||''));
+  document.getElementById('hint-text').textContent = '⚠ Firebase error: ' + (err.message || err.code || 'unknown');
+});
 
 function rebuildAll(){
   var tg=document.getElementById('tgutter'); tg.innerHTML='';
