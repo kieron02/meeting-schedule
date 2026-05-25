@@ -208,9 +208,14 @@ a.back:hover{color:var(--text);}
   <div class="mb">
     <h3 id="mTitle">Add Meeting</h3>
     <div><label>Name</label><input type="text" id="mName" placeholder="e.g. Vitol discussion"/></div>
-    <div class="r2">
-      <div><label>Day</label><select id="mDay"></select></div>
-      <div><label>Start</label><select id="mStart"></select></div>
+    <div id="mScheduledFields">
+      <div class="r2" style="margin-bottom:14px;">
+        <div><label>Day</label><select id="mDay"></select></div>
+        <div><label>Start</label><select id="mStart"></select></div>
+      </div>
+    </div>
+    <div id="mParkHint" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;font-size:12px;color:#1d4ed8;">
+      📋 This meeting will be added to the <strong>Unscheduled</strong> column on the right.
     </div>
     <div class="r2">
       <div><label>Duration</label>
@@ -238,7 +243,7 @@ a.back:hover{color:var(--text);}
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <input type="checkbox" id="mTent" style="width:auto;"/>
-      <label style="margin:0;text-transform:none;font-size:12px;letter-spacing:0;color:var(--text)">Tentative</label>
+      <label style="margin:0;text-transform:none;font-size:12px;letter-spacing:0;color:var(--text)">Tentative / Unscheduled</label>
     </div>
     <div class="mact">
       <button class="btn bg" id="mCancel">Cancel</button>
@@ -485,19 +490,80 @@ document.getElementById('pbCancel').addEventListener('click',function(){clipboar
 function fillDS(sel,sk){sel.innerHTML='';for(var i=0;i<days.length;i++){var o=document.createElement('option');o.value=days[i].key;o.textContent=days[i].date+' ('+days[i].key+')';if(days[i].key===sk)o.selected=true;sel.appendChild(o);}}
 function fillSS(sel,sm){sel.innerHTML='';for(var h=8;h<=18;h++)for(var mm=0;mm<60;mm+=15){var tm=(h-DS)*60+mm;var o=document.createElement('option');o.value=tm;o.textContent=p2(h)+':'+p2(mm);if(tm===sm)o.selected=true;sel.appendChild(o);}}
 var ovM=document.getElementById('ovM'),eid=null,isAdd=false;
-function openAddM(dk,sm){isAdd=true;eid=null;document.getElementById('mTitle').textContent='Add Meeting';document.getElementById('mName').value='';fillDS(document.getElementById('mDay'),dk);fillSS(document.getElementById('mStart'),sm);document.getElementById('mDur').value='60';document.getElementById('mCls').value='c-trader';document.getElementById('mTent').checked=false;ovM.classList.add('open');setTimeout(function(){document.getElementById('mName').focus();},50);}
-function openEditM(id){var m=gm(id);if(!m)return;isAdd=false;eid=id;document.getElementById('mTitle').textContent='Edit Meeting';document.getElementById('mName').value=m.name;fillDS(document.getElementById('mDay'),m.day);fillSS(document.getElementById('mStart'),m.startMin);document.getElementById('mDur').value=m.durMin;var steel=['c-hyundai','c-chinasteel','c-hoaphat'];document.getElementById('mCls').value=steel.indexOf(m.cls)>-1?'c-formosa':(m.cls||'c-trader');document.getElementById('mTent').checked=!!m.tentative;ovM.classList.add('open');setTimeout(function(){document.getElementById('mName').focus();},50);}
+function openAddM(dk,sm,tentative){isAdd=true;eid=null;
+  document.getElementById('mTitle').textContent='Add Meeting';
+  document.getElementById('mName').value='';
+  fillDS(document.getElementById('mDay'),dk||days[0].key);
+  fillSS(document.getElementById('mStart'),sm||0);
+  document.getElementById('mDur').value='60';
+  document.getElementById('mCls').value='c-trader';
+  document.getElementById('mTent').checked=!!tentative;
+  updateModalTentState();
+  ovM.classList.add('open');
+  setTimeout(function(){document.getElementById('mName').focus();},50);
+}
+function openEditM(id){var m=gm(id);if(!m)return;isAdd=false;eid=id;
+  document.getElementById('mTitle').textContent='Edit Meeting';
+  document.getElementById('mName').value=m.name;
+  fillDS(document.getElementById('mDay'),m.day);
+  fillSS(document.getElementById('mStart'),m.startMin);
+  document.getElementById('mDur').value=m.durMin;
+  var steel=['c-hyundai','c-chinasteel','c-hoaphat'];
+  document.getElementById('mCls').value=steel.indexOf(m.cls)>-1?'c-formosa':(m.cls||'c-trader');
+  document.getElementById('mTent').checked=!!m.tentative;
+  updateModalTentState();
+  ovM.classList.add('open');
+  setTimeout(function(){document.getElementById('mName').focus();},50);
+}
 function closeM(){ovM.classList.remove('open');eid=null;isAdd=false;}
 document.getElementById('mCancel').addEventListener('click',closeM);
 ovM.addEventListener('click',function(e){if(e.target===ovM)closeM();});
 document.getElementById('mSave').addEventListener('click',function(){
-  var name=document.getElementById('mName').value.trim(),day=document.getElementById('mDay').value,start=parseInt(document.getElementById('mStart').value),dur=parseInt(document.getElementById('mDur').value),cls=document.getElementById('mCls').value,tent=document.getElementById('mTent').checked;
+  var name  = document.getElementById('mName').value.trim();
+  var day   = document.getElementById('mDay').value;
+  var start = parseInt(document.getElementById('mStart').value);
+  var dur   = parseInt(document.getElementById('mDur').value);
+  var cls   = document.getElementById('mCls').value;
+  var tent  = document.getElementById('mTent').checked;
   if(!name){document.getElementById('mName').focus();return;}
-  if(isAdd){var nm={id:'m'+(++uid),day:day,startMin:start,durMin:dur,name:name,cls:cls,tentative:tent};meetings.push(nm);makeCard(nm);}
-  else{var m=gm(eid);if(!m){closeM();return;}m.name=name;m.day=day;m.startMin=start;m.durMin=dur;m.cls=cls;m.tentative=tent;var old=document.getElementById('card-'+m.id);if(old)old.remove();makeCard(m);}
+
+  if(tent) {
+    // tentative → go to parking lot
+    if(isAdd) {
+      parkMeetings.push({id:'p'+(++parkUid),name:name,durMin:dur,cls:cls,tentative:true});
+    } else {
+      // editing existing scheduled meeting → move to parking lot
+      var m=gm(eid);
+      if(m){
+        parkMeetings.push({id:'p'+(++parkUid),name:name,durMin:dur,cls:cls,tentative:true});
+        meetings=meetings.filter(function(x){return x.id!==eid;});
+        var old=document.getElementById('card-'+eid);if(old)old.remove();
+      }
+    }
+    renderParkCanvas();
+  } else {
+    // scheduled → goes to timetable
+    if(isAdd){
+      var nm={id:'m'+(++uid),day:day,startMin:start,durMin:dur,name:name,cls:cls,tentative:false};
+      meetings.push(nm);makeCard(nm);
+    } else {
+      var m2=gm(eid);if(!m2){closeM();return;}
+      m2.name=name;m2.day=day;m2.startMin=start;m2.durMin=dur;m2.cls=cls;m2.tentative=false;
+      var old2=document.getElementById('card-'+m2.id);if(old2)old2.remove();makeCard(m2);
+    }
+  }
   closeM();
 });
 document.getElementById('mName').addEventListener('keydown',function(e){if(e.key==='Enter')document.getElementById('mSave').click();if(e.key==='Escape')closeM();});
+
+// Toggle scheduled fields based on tentative checkbox
+function updateModalTentState() {
+  var tent = document.getElementById('mTent').checked;
+  document.getElementById('mScheduledFields').style.display = tent ? 'none' : '';
+  document.getElementById('mParkHint').style.display = tent ? 'block' : 'none';
+  document.getElementById('mTitle').textContent = tent ? 'Add Unscheduled Meeting' : (isAdd ? 'Add Meeting' : 'Edit Meeting');
+}
+document.getElementById('mTent').addEventListener('change', updateModalTentState);
 
 // DELETE
 var ovD=document.getElementById('ovDel'),did=null;
@@ -526,46 +592,30 @@ document.getElementById('btnSave').addEventListener('click',function(){
   });
 });
 
-// PARKING LOT ────────────────────────────────────────────────────
-var parkMeetings = []; // {id, name, cls, durMin, tentative}
+// PARKING LOT ─────────────────────────────────────────────────────
+var parkMeetings = [];
 var parkUid = 500;
 
 function renderParkCanvas() {
   var canvas = document.getElementById('parkCanvas');
   var empty  = document.getElementById('parkEmpty');
-  // remove old cards (keep empty label and any non-card elements)
-  var oldCards = canvas.querySelectorAll('.card');
+  var oldCards = canvas.querySelectorAll('.pcard');
   for (var i = 0; i < oldCards.length; i++) oldCards[i].remove();
-
   empty.style.display = parkMeetings.length ? 'none' : 'block';
-
-  for (var pi = 0; pi < parkMeetings.length; pi++) {
-    makeParkCard(parkMeetings[pi]);
-  }
+  for (var pi = 0; pi < parkMeetings.length; pi++) makeParkCard(parkMeetings[pi]);
 }
 
 function makeParkCard(pm) {
   var canvas = document.getElementById('parkCanvas');
   var card = document.createElement('div');
-  card.className = 'card ' + (pm.cls || 'c-trader');
+  card.className = 'pcard card ' + (pm.cls || 'c-trader');
   card.id = 'pcard-' + pm.id;
-  card.style.position = 'relative';
-  card.style.left = '';
-  card.style.top  = '';
-  card.style.right = '';
-  card.style.margin = '6px 8px';
-  card.style.height = 'auto';
-  card.style.minHeight = '52px';
-  card.style.cursor = 'grab';
+  card.style.cssText = 'position:relative;left:auto;top:auto;right:auto;margin:6px 8px;height:auto;min-height:52px;cursor:grab;';
 
   var cn = document.createElement('span'); cn.className = 'cn'; cn.textContent = pm.name;
-  var ct = document.createElement('span'); ct.className = 'ct'; ct.textContent = (pm.durMin||60) + ' min';
-  if (pm.tentative) {
-    var tv = document.createElement('span'); tv.className = 'cv'; tv.textContent = 'tentative';
-    card.appendChild(cn); card.appendChild(ct); card.appendChild(tv);
-  } else {
-    card.appendChild(cn); card.appendChild(ct);
-  }
+  var ct = document.createElement('span'); ct.className = 'ct'; ct.textContent = (pm.durMin||60) + ' min · unscheduled';
+  card.appendChild(cn); card.appendChild(ct);
+  if (pm.tentative) { var tv = document.createElement('span'); tv.className = 'cv'; tv.textContent = 'tentative'; card.appendChild(tv); }
 
   // category pill
   var ci2 = CAT[pm.cls] || CAT['c-trader'];
@@ -589,68 +639,55 @@ function makeParkCard(pm) {
   pill.appendChild(cdot); pill.appendChild(clbl); pill.appendChild(carr); pill.appendChild(csel);
   card.appendChild(pill);
 
-  // buttons
+  // action buttons
   var btns = document.createElement('div'); btns.className = 'card-btns'; btns.style.display = 'flex';
-  var be = document.createElement('button'); be.className = 'cb edit'; be.textContent = '✎'; be.title = 'Edit';
-  var bd = document.createElement('button'); bd.className = 'cb del';  bd.textContent = '✕'; bd.title = 'Remove';
+  var be = document.createElement('button'); be.className = 'cb edit'; be.textContent = '✎';
+  var bd = document.createElement('button'); bd.className = 'cb del';  bd.textContent = '✕';
   btns.appendChild(be); btns.appendChild(bd);
   card.appendChild(btns);
   canvas.appendChild(card);
 
-  // drag from parking lot to schedule
+  // ── drag from parking lot → schedule
   card.addEventListener('mousedown', function(e) {
-    if (e.target === be || e.target === bd || e.target === btns || e.target === csel) return;
-    e.preventDefault();
-    hideTip();
+    if (e.target === be || e.target === bd || e.target === csel || e.target === btns) return;
+    e.preventDefault(); hideTip();
 
-    // create a floating ghost card that follows the mouse
     var ghost = document.createElement('div');
     ghost.className = 'card ' + pm.cls;
-    ghost.style.position = 'fixed';
-    ghost.style.width = '170px';
-    ghost.style.height = Math.max(m2p(pm.durMin||60)-6, 40) + 'px';
-    ghost.style.opacity = '0.75';
-    ghost.style.pointerEvents = 'none';
-    ghost.style.zIndex = '999';
-    ghost.style.left = (e.clientX - 85) + 'px';
-    ghost.style.top  = (e.clientY - 20) + 'px';
-    var gcn = document.createElement('span'); gcn.className = 'cn'; gcn.textContent = pm.name;
-    var gct = document.createElement('span'); gct.className = 'ct'; gct.textContent = pm.durMin + ' min';
+    ghost.style.cssText = 'position:fixed;width:170px;height:'+ Math.max(m2p(pm.durMin||60)-6,40)+'px;opacity:.7;pointer-events:none;z-index:999;padding:5px 9px;border-radius:8px;';
+    var gcn = document.createElement('span'); gcn.className='cn'; gcn.textContent=pm.name;
+    var gct = document.createElement('span'); gct.className='ct'; gct.textContent=fmt(0)+' (drop to place)';
     ghost.appendChild(gcn); ghost.appendChild(gct);
     document.body.appendChild(ghost);
-
-    card.style.opacity = '0.35';
+    card.style.opacity = '0.3';
 
     function onMove(ev) {
       ghost.style.left = (ev.clientX - 85) + 'px';
       ghost.style.top  = (ev.clientY - 20) + 'px';
-      // highlight canvas under cursor
       for (var k in cvs) {
-        var c = cvs[k], cr2 = c.getBoundingClientRect();
-        c.style.background = (ev.clientX >= cr2.left && ev.clientX <= cr2.right) ? 'rgba(79,110,247,.06)' : '';
+        var c = cvs[k], r = c.getBoundingClientRect();
+        c.style.background = (ev.clientX >= r.left && ev.clientX <= r.right) ? 'rgba(79,110,247,.07)' : '';
+        if (ev.clientX >= r.left && ev.clientX <= r.right) {
+          var dropMin = snp(Math.max(0, p2m(ev.clientY - r.top)));
+          gct.textContent = fmt(dropMin) + ' – ' + fmt(dropMin + (pm.durMin||60));
+        }
       }
       showG(ev.clientX, ev.clientY, pm.name);
     }
-
     function onUp(ev) {
       document.body.removeChild(ghost);
       card.style.opacity = '';
       hideG();
       for (var k in cvs) cvs[k].style.background = '';
-
-      // check if dropped on a day canvas
       for (var dk in cvs) {
-        var c2 = cvs[dk], cr3 = c2.getBoundingClientRect();
-        if (ev.clientX >= cr3.left && ev.clientX <= cr3.right) {
-          var dropMin = snp(Math.max(0, p2m(ev.clientY - cr3.top)));
-          // create real meeting
-          var nm = { id:'m'+(++uid), day:dk, startMin:dropMin, durMin:pm.durMin||60, name:pm.name, cls:pm.cls, tentative:pm.tentative||false };
-          meetings.push(nm);
-          makeCard(nm);
-          // remove from parking lot
+        var c2 = cvs[dk], r2 = c2.getBoundingClientRect();
+        if (ev.clientX >= r2.left && ev.clientX <= r2.right) {
+          var sm = snp(Math.max(0, p2m(ev.clientY - r2.top)));
+          // auto-remove tentative when moved to schedule
+          var nm = { id:'m'+(++uid), day:dk, startMin:sm, durMin:pm.durMin||60, name:pm.name, cls:pm.cls, tentative:false };
+          meetings.push(nm); makeCard(nm);
           parkMeetings = parkMeetings.filter(function(x){ return x.id !== pm.id; });
-          renderParkCanvas();
-          break;
+          renderParkCanvas(); break;
         }
       }
       document.removeEventListener('mousemove', onMove);
@@ -660,105 +697,85 @@ function makeParkCard(pm) {
     document.addEventListener('mouseup', onUp);
   });
 
-  be.addEventListener('click', function(e) { e.stopPropagation(); openParkEdit(pm); });
-  bd.addEventListener('click', function(e) {
+  be.addEventListener('click', function(e){ e.stopPropagation(); openParkModal(pm); });
+  bd.addEventListener('click', function(e){
     e.stopPropagation();
     parkMeetings = parkMeetings.filter(function(x){ return x.id !== pm.id; });
     renderParkCanvas();
   });
 }
 
-// Add unscheduled meeting
-document.getElementById('parkAddBtn').addEventListener('click', function() {
-  openParkAdd();
-});
+document.getElementById('parkAddBtn').addEventListener('click', function(){ openAddM(days[0]?days[0].key:'Mon', 0, true); });
 
-var ovPark = null; // reuse meeting modal
-function openParkAdd() {
-  // reuse the meeting modal but in "park" mode
-  isAdd = true; eid = null;
-  document.getElementById('mTitle').textContent = 'Add Unscheduled Meeting';
-  document.getElementById('mName').value = '';
-  // hide day/start selects — not needed
-  document.getElementById('mDay').parentElement.style.display = 'none';
-  document.getElementById('mStart').parentElement.style.display = 'none';
-  document.getElementById('mDur').value = '60';
-  document.getElementById('mCls').value = 'c-trader';
-  document.getElementById('mTent').checked = true;
-  document.getElementById('ovM').classList.add('open');
-  document.getElementById('ovM').dataset.parkMode = '1';
-  setTimeout(function(){ document.getElementById('mName').focus(); }, 50);
+// ── drag from schedule → parking lot
+function enableScheduleToParkDrag(card, m) {
+  // Patch the existing card's mousedown to also allow dropping on park canvas
+  // We detect drop on park area in the existing drag onUp handler
+  var parkCanvas = document.getElementById('parkCanvas');
+  card._parkEnabled = true;
+  // Extend existing mouseup via parking lot canvas detection
+  // This is handled inside makeCard's onUp — we extend it by checking park bounds
 }
 
-function openParkEdit(pm) {
-  document.getElementById('mTitle').textContent = 'Edit Unscheduled Meeting';
-  document.getElementById('mName').value = pm.name;
-  document.getElementById('mDay').parentElement.style.display = 'none';
-  document.getElementById('mStart').parentElement.style.display = 'none';
-  document.getElementById('mDur').value = pm.durMin || 60;
-  document.getElementById('mCls').value = pm.cls || 'c-trader';
-  document.getElementById('mTent').checked = !!pm.tentative;
-  document.getElementById('ovM').classList.add('open');
-  document.getElementById('ovM').dataset.parkMode = '1';
-  document.getElementById('ovM').dataset.parkId = pm.id;
-  setTimeout(function(){ document.getElementById('mName').focus(); }, 50);
-}
-
-// Patch meeting modal save to handle park mode
-var origMSave = document.getElementById('mSave').onclick;
-document.getElementById('mSave').addEventListener('click', function() {
-  var ovMEl = document.getElementById('ovM');
-  if (ovMEl.dataset.parkMode !== '1') return; // handled by original listener
-  var name = document.getElementById('mName').value.trim();
-  var dur  = parseInt(document.getElementById('mDur').value);
-  var cls  = document.getElementById('mCls').value;
-  var tent = document.getElementById('mTent').checked;
-  if (!name) { document.getElementById('mName').focus(); return; }
-
-  var pid = ovMEl.dataset.parkId;
-  if (pid) {
-    // edit existing
-    var existing = parkMeetings.find ? parkMeetings.find(function(x){return x.id===pid;}) : null;
-    if (!existing) { for(var i=0;i<parkMeetings.length;i++) if(parkMeetings[i].id===pid){existing=parkMeetings[i];break;} }
-    if (existing) { existing.name=name; existing.durMin=dur; existing.cls=cls; existing.tentative=tent; }
-  } else {
-    parkMeetings.push({ id: 'p'+(++parkUid), name:name, durMin:dur, cls:cls, tentative:tent });
-  }
-  renderParkCanvas();
-  // restore day/start fields visibility and reset park mode
-  document.getElementById('mDay').parentElement.style.display = '';
-  document.getElementById('mStart').parentElement.style.display = '';
-  delete ovMEl.dataset.parkMode;
-  delete ovMEl.dataset.parkId;
-  closeM();
+// Extend makeCard to support dragging back to parking lot
+// We do this by monkey-patching: after renderAll, intercept drag ends
+// Simpler: override the onUp in makeCard by patching the days-wrap mouseup
+document.getElementById('daysWrap').addEventListener('mouseup', function() {
+  // handled per-card
 });
 
-// Patch closeM to restore fields
-var origCloseM = closeM;
-closeM = function() {
-  document.getElementById('mDay').parentElement.style.display = '';
-  document.getElementById('mStart').parentElement.style.display = '';
-  var ovMEl = document.getElementById('ovM');
-  delete ovMEl.dataset.parkMode;
-  delete ovMEl.dataset.parkId;
-  origCloseM();
+// Patch: add park drop detection inside makeCard drag
+// We redefine makeCard to include park drop
+var _origMakeCard = makeCard;
+makeCard = function(m) {
+  _origMakeCard(m);
+  var card = document.getElementById('card-' + m.id);
+  if (!card) return;
+
+  // We need to intercept the drag end to check if dropped on park
+  // Attach a separate mousedown listener that wraps the drop
+  card.addEventListener('mousedown', function(e) {
+    if (e.button !== 0) return;
+    // listen for mouseup on document to check park drop
+    function checkParkDrop(ev) {
+      var pc = document.getElementById('parkCanvas');
+      var pr = pc.getBoundingClientRect();
+      if (ev.clientX >= pr.left && ev.clientX <= pr.right && ev.clientY >= pr.top && ev.clientY <= pr.bottom) {
+        // dropped on park canvas — move to parking lot
+        setTimeout(function() {
+          // only if card is still in schedule (not already moved by primary drag handler)
+          var stillInSchedule = false;
+          for (var k in cvs) { if (cvs[k].contains(document.getElementById('card-'+m.id))) { stillInSchedule=true; break; } }
+          if (stillInSchedule) {
+            // auto-mark tentative when moved to parking lot
+            parkMeetings.push({ id:'p'+(++parkUid), name:m.name, durMin:m.durMin, cls:m.cls, tentative:true });
+            meetings = meetings.filter(function(x){ return x.id !== m.id; });
+            var c = document.getElementById('card-'+m.id); if(c) c.remove();
+            renderParkCanvas();
+          }
+        }, 50);
+      }
+      document.removeEventListener('mouseup', checkParkDrop);
+    }
+    document.addEventListener('mouseup', checkParkDrop);
+  });
 };
 
-// Also allow dragging FROM schedule BACK to parking lot
-var origMakeCard = makeCard;
-
-// Make parking lot a drop target
-document.getElementById('parkCanvas').addEventListener('mouseup', function(e) {
-  // handled by individual card drag onUp
+// Highlight park canvas during schedule card drag
+document.addEventListener('mousemove', function(e) {
+  var pc = document.getElementById('parkCanvas');
+  if (!pc) return;
+  var pr = pc.getBoundingClientRect();
+  var over = e.clientX >= pr.left && e.clientX <= pr.right && e.clientY >= pr.top && e.clientY <= pr.bottom;
+  pc.style.background = over ? 'rgba(79,110,247,.06)' : '';
+  var ph = document.getElementById('parkCol');
+  if (ph) ph.style.borderColor = over ? '#4f6ef7' : '#d1d9e6';
 });
 
-// Height of park canvas = match schedule height
 document.getElementById('parkCanvas').style.minHeight = (HOURS.length * HP) + 'px';
-
-// Init park canvas
 renderParkCanvas();
 
-// ── EDITABLE TITLE
+// ── EDITABLE TITLE// ── EDITABLE TITLE
 var titleEl=document.getElementById('pageTitle'),lastTitle='';
 titleEl.addEventListener('focus',function(){lastTitle=titleEl.textContent.trim();var r=document.createRange();r.selectNodeContents(titleEl);var s=window.getSelection();s.removeAllRanges();s.addRange(r);});
 titleEl.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();titleEl.blur();}if(e.key==='Escape'){titleEl.textContent=lastTitle;titleEl.blur();}});
