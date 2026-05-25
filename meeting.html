@@ -73,7 +73,8 @@ a.back:hover{color:var(--text);}
 .btn-save.saved{background:#dcfce7;color:#15803d;border:1px solid #16a34a;}
 #sync{font-size:11px;font-family:'DM Mono',monospace;padding:4px 10px;border-radius:20px;background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;flex-shrink:0;}
 #sync.err{background:#fef2f2;border-color:#fecaca;color:#dc2626;}
-.grid-wrap{height:calc(100vh - 175px);overflow:auto;border-radius:12px;}
+.outer-wrap{display:flex;gap:12px;height:calc(100vh - 175px);}
+.grid-wrap{flex:1;overflow:auto;border-radius:12px;min-width:0;}
 .grid-wrap::-webkit-scrollbar{width:6px;height:6px;}
 .grid-wrap::-webkit-scrollbar-thumb{background:#b0bcd4;border-radius:3px;}
 .grid{display:flex;min-width:fit-content;}
@@ -95,11 +96,13 @@ a.back:hover{color:var(--text);}
 .hhl{position:absolute;left:0;right:0;height:1px;background:rgba(0,0,0,.05);pointer-events:none;}
 .canvas.add-mode{cursor:crosshair;background:rgba(79,110,247,.03);}
 /* PARKING LOT */
-.park-col{min-width:180px;background:#fafafa;border-left:2px dashed #d1d9e6;display:flex;flex-direction:column;flex-shrink:0;}
-.park-hdr{height:var(--HDR);display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f5f5f5;border-bottom:2px dashed #d1d9e6;flex-shrink:0;position:sticky;top:0;z-index:15;padding:0 8px;gap:2px;}
+.park-col{width:200px;flex-shrink:0;background:#fafafa;border:2px dashed #d1d9e6;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;}
+.park-hdr{height:var(--HDR);display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f0f4f8;border-bottom:2px dashed #d1d9e6;flex-shrink:0;padding:0 8px;gap:2px;}
 .park-hdr .dow{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;}
 .park-hdr .dt{font-size:12px;font-weight:600;color:var(--muted);}
-.park-canvas{position:relative;width:100%;flex:1;}
+.park-canvas{position:relative;width:100%;flex:1;overflow-y:auto;overflow-x:hidden;}
+.park-canvas::-webkit-scrollbar{width:4px;}
+.park-canvas::-webkit-scrollbar-thumb{background:#b0bcd4;border-radius:2px;}
 .park-canvas .card{border-style:dashed;border-width:1px;border-color:inherit;opacity:.85;}
 .park-canvas .card:hover{opacity:1;}
 .park-empty{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:#c4c9d4;font-size:11px;font-family:'DM Mono',monospace;pointer-events:none;white-space:nowrap;}
@@ -172,7 +175,7 @@ a.back:hover{color:var(--text);}
   <button class="hbtn btn-excel" id="btnExcel">📊 Export Excel</button>
   <button class="hbtn btn-save" id="btnSave">💾 Save</button>
 </header>
-<div class="grid-wrap"><div class="grid">
+<div class="outer-wrap"><div class="grid-wrap"><div class="grid">
   <div class="time-col" id="timeCol"></div>
   <div class="days-wrap" id="daysWrap"></div>
 </div>
