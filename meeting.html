@@ -96,14 +96,20 @@ a.back:hover{color:var(--text);}
 .hhl{position:absolute;left:0;right:0;height:1px;background:rgba(0,0,0,.05);pointer-events:none;}
 .canvas.add-mode{cursor:crosshair;background:rgba(79,110,247,.03);}
 /* PARKING LOT */
-.park-col{width:200px;min-width:200px;flex-shrink:0;background:#fafafa;border:2px dashed #d1d9e6;border-radius:12px;display:flex;flex-direction:column;overflow-x:hidden;overflow-y:hidden;height:100%;}
+.park-col{width:200px;min-width:200px;flex-shrink:0;background:#fafafa;border:2px dashed #d1d9e6;border-radius:12px;display:flex;flex-direction:column;height:100%;overflow:hidden;}
 .park-hdr{height:var(--HDR);display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f0f4f8;border-bottom:2px dashed #d1d9e6;flex-shrink:0;padding:0 8px;gap:2px;}
 .park-hdr .dow{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;}
 .park-hdr .dt{font-size:12px;font-weight:600;color:var(--muted);}
-.park-canvas{position:relative;width:100%;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;}
+.park-canvas{width:100%;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-bottom:12px;}
 .park-canvas::-webkit-scrollbar{width:4px;}
 .park-canvas::-webkit-scrollbar-thumb{background:#b0bcd4;border-radius:2px;}
-.park-canvas .card{border-style:dashed;border-width:1px;border-color:inherit;opacity:.85;}
+.park-canvas .card{
+  position:relative !important;
+  left:auto !important;top:auto !important;right:auto !important;
+  width:auto !important;height:auto !important;min-height:52px;
+  border-style:dashed;border-width:1px;border-color:inherit;
+  opacity:.85;display:flex;flex-direction:column;
+}
 .park-canvas .card:hover{opacity:1;}
 .park-empty{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:#c4c9d4;font-size:11px;font-family:'DM Mono',monospace;pointer-events:none;white-space:nowrap;}
 .park-add-btn{margin:10px 8px 6px;padding:7px;background:transparent;border:1px dashed #d1d9e6;border-radius:8px;font-size:11px;color:var(--muted);cursor:pointer;text-align:center;font-family:'DM Sans',sans-serif;transition:all .15s;flex-shrink:0;}
@@ -618,7 +624,7 @@ function makeParkCard(pm) {
   var card = document.createElement('div');
   card.className = 'pcard card ' + (pm.cls || 'c-trader');
   card.id = 'pcard-' + pm.id;
-  card.style.cssText = 'position:relative;left:auto;top:auto;right:auto;margin:6px 8px;height:auto;min-height:52px;cursor:grab;';
+  card.style.cssText = 'position:relative;left:auto;top:auto;right:auto;width:auto;margin:6px 8px;height:auto;min-height:52px;cursor:grab;display:flex;';
 
   var cn = document.createElement('span'); cn.className = 'cn'; cn.textContent = pm.name;
   var ct = document.createElement('span'); ct.className = 'ct'; ct.textContent = (pm.durMin||60) + ' min · unscheduled';
@@ -780,7 +786,7 @@ document.addEventListener('mousemove', function(e) {
   if (ph) ph.style.borderColor = over ? '#4f6ef7' : '#d1d9e6';
 });
 
-document.getElementById('parkCanvas').style.minHeight = (HOURS.length * HP) + 'px';
+// park canvas scrolls naturally — no fixed min-height needed
 renderParkCanvas();
 
 // ── EDITABLE TITLE// ── EDITABLE TITLE
