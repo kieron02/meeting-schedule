@@ -586,10 +586,11 @@ document.getElementById('delYes').addEventListener('click',function(){
 document.getElementById('btnSave').addEventListener('click',function(){
   var btn=this;btn.disabled=true;
   ssync('syncing','↑ Saving…');
-  var mo={},dobj={};
+  var mo={},dobj={},po={};
   meetings.forEach(function(m){mo[m.id]=m;});
   days.forEach(function(d){dobj[d.key]=d;});
-  sref.update({days:dobj,meetings:mo},function(err){
+  parkMeetings.forEach(function(p){po[p.id]=p;});
+  sref.update({days:dobj,meetings:mo,parkMeetings:po},function(err){
     if(err){ssync('err','✕ Error');btn.disabled=false;}
     else{btn.textContent='✓ Saved!';btn.classList.add('saved');ssync('','● Live');
       setTimeout(function(){btn.textContent='💾 Save';btn.classList.remove('saved');btn.disabled=false;},2500);}
