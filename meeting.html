@@ -308,10 +308,13 @@ sref.on('value',function(snap){
   if(!data){window.location.href='index.html';return;}
   document.getElementById('pageTitle').textContent=data.name||'Meeting Schedule';
   document.title=data.name||'Meeting Schedule';
-  days=oa(data.days);
-  meetings=oa(data.meetings);
+  days        = oa(data.days);
+  meetings    = oa(data.meetings);
+  parkMeetings= oa(data.parkMeetings);
   meetings.forEach(function(m){var n=parseInt((m.id||'').replace(/[^0-9]/g,''));if(!isNaN(n)&&n>uid)uid=n;});
+  parkMeetings.forEach(function(p){var n=parseInt((p.id||'').replace(/[^0-9]/g,''));if(!isNaN(n)&&n>parkUid)parkUid=n;});
   renderAll();
+  renderParkCanvas();
   ssync('','● Live');
 },function(e){ssync('err','✕ '+e.code);});
 
@@ -885,16 +888,18 @@ document.getElementById('btnExcel').addEventListener('click', function() {
   // First figure out all unique start times that have at least one meeting
   // Then for each start time, emit a block of rows
 
-  // Collect all meeting start times sorted
-  var startTimes = [];
-  var meetingsByDayTime = {}; // "day|startMin" -> meeting
+  // Build full 15-min slot list 08:00–18:00
+  var allSlotMins = [];
+  for(var _h=8;_h<=18;_h++) for(var _mm=0;_mm<60;_mm+=15){ if(_h===18&&_mm>0) break; allSlotMins.push((_h-DS)*60+_mm); }
+
+  // Map meetings by day|startMin
+  var meetingsByDayTime = {};
   for(var mi=0;mi<meetings.length;mi++){
     var m=meetings[mi];
     var k=m.day+'|'+m.startMin;
     meetingsByDayTime[k]=m;
-    if(startTimes.indexOf(m.startMin)<0) startTimes.push(m.startMin);
   }
-  startTimes.sort(function(a,b){return a-b;});
+  var startTimes = allSlotMins; // use ALL slots, not just meeting start times
 
   // Build rows array: each entry = {timeLabel, cells: [{dayKey, meeting|null}]}
   var sheetRows='', rowIdx=1; // rowIdx is 0-based, +1 for header
@@ -911,24 +916,23 @@ document.getElementById('btnExcel').addEventListener('click', function() {
 
   var merges = []; // collect merge ranges
 
-  // For each start time, emit rows
+  // For each start time, emit rows (ALL times shown, even if no meeting)
   for(var si=0;si<startTimes.length;si++){
     var st = startTimes[si];
     var timeLabel = fmt(st);
 
     // find all meetings at this start time across days
-    var hasMeeting = false;
     var mCols = []; // per day: meeting or null
     for(var di3=0;di3<days.length;di3++){
       var mm2 = meetingsByDayTime[days[di3].key+'|'+st] || null;
       mCols.push(mm2);
-      if(mm2) hasMeeting=true;
     }
-    if(!hasMeeting) continue;
+    // always show all time slots
 
-    // determine how many sub-rows: name + time range + tentative (if any)
-    var hasTent = mCols.some(function(m2){return m2&&m2.tentative;});
-    var subRows = hasTent ? 3 : 2;
+    // determine how many sub-rows
+    var hasMeeting = mCols.some(function(m2){return m2!==null;});
+    var hasTent    = mCols.some(function(m2){return m2&&m2.tentative;});
+    var subRows    = !hasMeeting ? 1 : (hasTent ? 3 : 2);
 
     // emit sub-rows
     for(var sr=0;sr<subRows;sr++){
@@ -971,13 +975,15 @@ document.getElementById('btnExcel').addEventListener('click', function() {
     }
     rowIdx += subRows;
 
-    // spacer row between meeting blocks
-    sheetRows += '<row r="'+(rowIdx+1)+'" ht="6" customHeight="1">';
-    sheetRows += '<c r="'+cr(rowIdx,0)+'" t="s" s="'+XF_EMPTY+'"><v>'+S('')+'</v></c>';
-    for(var di5=0;di5<days.length;di5++)
-      sheetRows += '<c r="'+cr(rowIdx,di5+1)+'" t="s" s="'+XF_EMPTY+'"><v>'+S('')+'</v></c>';
-    sheetRows += '</row>';
-    rowIdx++;
+    // only add spacer row after meeting blocks (not empty slots)
+    if(hasMeeting){
+      sheetRows += '<row r="'+(rowIdx+1)+'" ht="4" customHeight="1">';
+      sheetRows += '<c r="'+cr(rowIdx,0)+'" t="s" s="'+XF_EMPTY+'"><v>'+S('')+'</v></c>';
+      for(var di5=0;di5<days.length;di5++)
+        sheetRows += '<c r="'+cr(rowIdx,di5+1)+'" t="s" s="'+XF_EMPTY+'"><v>'+S('')+'</v></c>';
+      sheetRows += '</row>';
+      rowIdx++;
+    }
   }
 
   // ── MERGE CELLS XML ──────────────────────────────────────────
